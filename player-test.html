@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html>
+  <body style="margin: 0; background: black">
+    <video id="v" style="width: 100vw; height: 100vh" autoplay muted></video>
+
+    <script>
+      const server = "http://localhost:5000";
+      const deviceId = "MY-PC-1";
+      const token =
+        "0c35b2aee2d1fcaca44b04183ad48916f7d11acd45820b8b131425f17a4594a9";
+
+      async function getConfig() {
+        const r = await fetch(`${server}/api/devices/${deviceId}/config`, {
+          headers: { "x-device-token": token },
+        });
+        return r.json();
+      }
+
+      async function heartbeat() {
+        await fetch(`${server}/api/devices/${deviceId}/heartbeat`, {
+          method: "POST",
+          headers: { "x-device-token": token },
+        });
+      }
+
+      async function status(name) {
+        await fetch(`${server}/api/devices/${deviceId}/status`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-device-token": token,
+          },
+          body: JSON.stringify({ state: "playing", currentMediaName: name }),
+        });
+      }
+
+      let list = [];
+      let i = 0;
+
+      async function start() {
+        const cfg = await getConfig();
+        list = cfg.playlistItems?.map((x) => server + x.url) || [];
+        if (!list.length && cfg.defaultVideo)
+          list = [server + cfg.defaultVideo.url];
+        if (!list.length) {
+          alert("No playlist/default video assigned.");
+          return;
+        }
+
+        const video = document.getElementById("v");
+
+        function playNext() {
+          const url = list[i % list.length];
+          i++;
+          video.src = url;
+          video.play().catch(() => {});
+          status(url.split("/").pop());
+        }
+
+        video.onended = playNext;
+        playNext();
+
+        setInterval(heartbeat, 15000);
+      }
+
+      start();
+    </script>
+  </body>
+</html>
