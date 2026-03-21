@@ -26,7 +26,7 @@ router.post("/register", protect, adminOnly, registerUser);
 router.post("/login", loginUser);
 
 // CRUD (Admin only)
-router.get("/", protect, adminOnly, getUsers);
+router.get("/", protect, receptionistOrAdmin, getUsers);
 router.get("/stats/login", protect, adminOnly, getUserLoginStats);
 router.get("/:id", protect, adminOnly, getUserById);
 router.put("/:id", protect, adminOnly, updateUser);
