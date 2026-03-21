@@ -593,7 +593,7 @@ export const sendReservationStatusEmail = async (
           <div class="logo-container">
             <div class="logo">
               <!-- Using the same small-logo concept from your React component -->
-              <img src="https://your-domain.com/path-to-small-logo.png" alt="Suva's Place Resort" />
+              <img src="${process.env.FRONTEND_URL}/images/small-logo.png" alt="Suva's Place Resort" />
             </div>
           </div>
           
