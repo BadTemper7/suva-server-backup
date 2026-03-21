@@ -176,7 +176,7 @@ export const sendEmail = async ({ to, subject, html, text }) => {
   }
 };
 
-// config/email.js - Updated Reservation Status Email Template
+// config/email.js - Updated Reservation Status Email Template with aligned logo design
 
 export const sendReservationStatusEmail = async (
   reservation,
@@ -287,6 +287,11 @@ export const sendReservationStatusEmail = async (
     },
   );
 
+  // Get logo URL (you can use base64 or hosted URL)
+  const logoUrl =
+    process.env.LOGO_URL ||
+    "https://suvasplaceresort.com/images/small-logo.png";
+
   const html = `
     <!DOCTYPE html>
     <html>
@@ -326,7 +331,7 @@ export const sendReservationStatusEmail = async (
           overflow: hidden;
         }
         
-        /* Decorative sun rays effect */
+        /* Decorative sun rays effect - matching React component */
         .header::before {
           content: '';
           position: absolute;
@@ -334,7 +339,7 @@ export const sendReservationStatusEmail = async (
           right: -50%;
           width: 200%;
           height: 200%;
-          background: radial-gradient(circle, rgba(255,215,0,0.15) 0%, transparent 70%);
+          background: radial-gradient(circle, rgba(255,215,0,0.2) 0%, transparent 70%);
           animation: shimmer 10s infinite;
         }
         
@@ -343,13 +348,14 @@ export const sendReservationStatusEmail = async (
           50% { transform: translate(20%, 20%); }
         }
         
-        /* Logo styling matching the React component */
-        .logo-container {
+        /* Logo container - matching React Logo component styling */
+        .logo-wrapper {
           margin-bottom: 20px;
           position: relative;
           display: inline-block;
         }
         
+        /* Logo styling - exactly matching React component */
         .logo {
           width: 80px;
           height: 80px;
@@ -361,29 +367,43 @@ export const sendReservationStatusEmail = async (
           box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.2);
           position: relative;
           transition: transform 0.3s ease;
+          cursor: pointer;
         }
         
         .logo img {
           width: 60px;
           height: 60px;
           object-fit: contain;
+          transition: transform 0.3s ease;
         }
         
-        /* Sun burst effect */
-        .logo::before {
+        /* Sun burst effect on hover - matching React component */
+        .logo:hover {
+          transform: scale(1.05);
+        }
+        
+        .logo:hover::before {
           content: '';
           position: absolute;
           inset: -8px;
           background: radial-gradient(circle, rgba(255,215,0,0.3), transparent);
           border-radius: 50%;
-          opacity: 0;
-          transition: opacity 0.3s ease;
-        }
-        
-        .logo:hover::before {
           opacity: 1;
+          animation: pulse 1.5s ease-in-out infinite;
         }
         
+        @keyframes pulse {
+          0%, 100% {
+            opacity: 0.3;
+            transform: scale(1);
+          }
+          50% {
+            opacity: 0.6;
+            transform: scale(1.1);
+          }
+        }
+        
+        /* Brand name - matching React component typography */
         .brand-name {
           font-family: 'Dancing Script', cursive;
           font-size: 32px;
@@ -391,6 +411,7 @@ export const sendReservationStatusEmail = async (
           color: white;
           margin-bottom: 8px;
           text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.2);
+          letter-spacing: 1px;
         }
         
         .brand-subtitle {
@@ -398,8 +419,10 @@ export const sendReservationStatusEmail = async (
           font-size: 14px;
           color: rgba(255, 255, 255, 0.9);
           letter-spacing: 1px;
+          font-style: italic;
         }
         
+        /* Status badge - matching React component styling */
         .status-badge {
           display: inline-block;
           padding: 8px 24px;
@@ -411,6 +434,12 @@ export const sendReservationStatusEmail = async (
           font-weight: 600;
           margin-top: 20px;
           border: 1px solid rgba(255, 255, 255, 0.3);
+          transition: all 0.3s ease;
+        }
+        
+        .status-badge:hover {
+          transform: translateY(-2px);
+          background: rgba(255, 255, 255, 0.3);
         }
         
         .content {
@@ -422,10 +451,12 @@ export const sendReservationStatusEmail = async (
           font-size: 18px;
           color: #78350f;
           margin-bottom: 20px;
+          font-weight: 500;
         }
         
         .greeting strong {
           color: #b45309;
+          font-weight: 700;
         }
         
         .message-text {
@@ -434,7 +465,7 @@ export const sendReservationStatusEmail = async (
           line-height: 1.8;
         }
         
-        /* Reservation card matching brand style */
+        /* Reservation card - matching brand aesthetics */
         .reservation-details {
           background: linear-gradient(135deg, #fffbeb, #fef3c7);
           border-radius: 20px;
@@ -442,6 +473,12 @@ export const sendReservationStatusEmail = async (
           margin: 30px 0;
           border-left: 4px solid ${template.color};
           box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+          transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+        
+        .reservation-details:hover {
+          transform: translateY(-2px);
+          box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
         }
         
         .reservation-details h3 {
@@ -451,6 +488,7 @@ export const sendReservationStatusEmail = async (
           display: flex;
           align-items: center;
           gap: 10px;
+          font-weight: 700;
         }
         
         .detail-row {
@@ -474,7 +512,7 @@ export const sendReservationStatusEmail = async (
           font-weight: 500;
         }
         
-        /* Button matching the "Have Fun Under The Sun" theme */
+        /* Button - matching "Have Fun Under The Sun" theme */
         .button {
           display: inline-block;
           padding: 14px 32px;
@@ -486,6 +524,8 @@ export const sendReservationStatusEmail = async (
           margin: 20px 0;
           transition: all 0.3s ease;
           box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+          border: none;
+          cursor: pointer;
         }
         
         .button:hover {
@@ -493,13 +533,18 @@ export const sendReservationStatusEmail = async (
           box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.2);
         }
         
-        /* Help section with brand colors */
+        /* Help section - matching brand colors */
         .help-section {
           margin-top: 30px;
           padding: 20px;
           background: linear-gradient(135deg, #fffbeb, #fef3c7);
           border-radius: 16px;
           border-left: 4px solid #f59e0b;
+          transition: transform 0.3s ease;
+        }
+        
+        .help-section:hover {
+          transform: translateX(4px);
         }
         
         .help-section p {
@@ -512,7 +557,7 @@ export const sendReservationStatusEmail = async (
           color: #b45309;
         }
         
-        /* Footer with brand elements */
+        /* Footer - matching React component styling */
         .footer {
           background: linear-gradient(135deg, #78350f, #92400e);
           padding: 30px;
@@ -523,9 +568,10 @@ export const sendReservationStatusEmail = async (
         .tagline {
           font-family: 'Dancing Script', cursive;
           font-size: 18px;
-          font-weight: medium;
+          font-weight: 500;
           color: #fde68a;
           margin-bottom: 20px;
+          letter-spacing: 0.5px;
         }
         
         .established {
@@ -534,6 +580,7 @@ export const sendReservationStatusEmail = async (
           letter-spacing: 2px;
           color: #fcd34d;
           margin: 10px 0;
+          text-transform: uppercase;
         }
         
         .divider {
@@ -548,6 +595,11 @@ export const sendReservationStatusEmail = async (
           line-height: 1.8;
           color: #fed7aa;
           margin-top: 20px;
+        }
+        
+        .contact-info strong {
+          color: #fffbeb;
+          font-weight: 700;
         }
         
         .footer-text {
@@ -580,20 +632,23 @@ export const sendReservationStatusEmail = async (
             width: 45px;
             height: 45px;
           }
+          
+          .tagline {
+            font-size: 16px;
+          }
         }
         
-        /* Import Dancing Script font */
+        /* Import Dancing Script font - matching React component */
         @import url('https://fonts.googleapis.com/css2?family=Dancing+Script:wght@400;500;600;700&display=swap');
       </style>
     </head>
     <body>
       <div class="container">
-        <!-- Header with brand styling -->
+        <!-- Header with brand styling - matching React Logo component -->
         <div class="header">
-          <div class="logo-container">
+          <div class="logo-wrapper">
             <div class="logo">
-              <!-- Using the same small-logo concept from your React component -->
-              <img src="https://suvasplaceresort.com/images/small-logo.png" alt="Suva's Place Resort" />
+              <img src="${logoUrl}" alt="Suva's Place Resort" />
             </div>
           </div>
           
@@ -658,7 +713,7 @@ export const sendReservationStatusEmail = async (
           </div>
         </div>
         
-        <!-- Footer with brand elements -->
+        <!-- Footer with brand elements - matching React component -->
         <div class="footer">
           <div class="tagline">Have Fun Under The Sun</div>
           <div class="established">Est. 1971</div>
