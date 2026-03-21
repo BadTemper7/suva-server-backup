@@ -23,6 +23,7 @@ import discountImageRoutes from "./routes/discountImageRoutes.js";
 import receiptRoutes from "./routes/receiptRoutes.js";
 import reportRoutes from "./routes/reportRoutes.js";
 import settingsRoutes from "./routes/settingsRoutes.js";
+import emailTest from "./routes/emailTest.js";
 import { initializeSettings } from "./controllers/settingsController.js";
 import dns from "dns";
 import path from "path";
@@ -31,6 +32,7 @@ import { fileURLToPath } from "url";
 import http from "http";
 import cron from "node-cron";
 import { createWebSocketServer } from "./wsServer.js";
+import { verifyEmailConnection } from "./config/email.js";
 
 dotenv.config();
 const app = express();
@@ -39,7 +41,7 @@ const PORT = process.env.PORT || 5000;
 app.use(cors());
 app.use(express.json());
 
-dns.setServers(["1.1.1.1", "8.8.8.8"])
+dns.setServers(["1.1.1.1", "8.8.8.8"]);
 // ✅ Ensure Superadmin exists
 async function ensureSuperAdmin() {
   const existing = await User.findOne({ username: "suva-admin" });
@@ -76,11 +78,11 @@ async function startServer() {
   await ensureSuperAdmin(); // ✅ called after DB is connected
   startSelfPingCron();
   startAutoUnlockJob();
+  await verifyEmailConnection();
 
   const __filename = fileURLToPath(import.meta.url);
   const __dirname = path.dirname(__filename);
   const JOB_INTERVAL_MS = 60 * 1000; // every 1 minute
-
   // setInterval(async () => {
   //   try {
   //     const { matched, modified } = await cancelExpiredPendings();
@@ -111,6 +113,7 @@ async function startServer() {
   app.use("/api/receipts", receiptRoutes);
   app.use("/api/reports", reportRoutes);
   app.use("/api/settings", settingsRoutes);
+  app.use("/api/email", emailTest);
 
   // Health check endpoint
   app.get("/health", (req, res) => {

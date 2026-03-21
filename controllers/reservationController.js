@@ -13,6 +13,7 @@ import fs from "fs";
 import path from "path";
 import { createNotification } from "../models/Notification.js";
 import { sendReservationStatusEmail } from "../config/email.js";
+import { emailQueue } from "../utils/emailQueue.js";
 
 const { Reservation, ReservationRoom } = ReservationModels;
 
@@ -285,6 +286,16 @@ export const updateReservationStatus = async (req, res) => {
     const previousStatus = reservation.status;
     reservation.status = status;
 
+    // Add notes if provided
+    if (notes) {
+      reservation.notes = reservation.notes || [];
+      reservation.notes.push({
+        text: notes,
+        userId: userId || req.user?._id,
+        date: new Date(),
+      });
+    }
+
     await reservation.save({ session });
     await session.commitTransaction();
     session.endSession();
@@ -295,30 +306,30 @@ export const updateReservationStatus = async (req, res) => {
       .populate("userId")
       .populate("discountId");
 
-    // 🚀 SEND EMAIL NOTIFICATION TO GUEST
-    try {
-      await sendReservationStatusEmail(
-        updatedReservation,
-        updatedReservation.guestId,
-        previousStatus,
-        status,
-      );
+    // 🚀 ADD EMAIL TO QUEUE INSTEAD OF SENDING DIRECTLY
+    if (updatedReservation.guestId && updatedReservation.guestId.email) {
+      emailQueue.add({
+        reservation: updatedReservation,
+        guest: updatedReservation.guestId,
+        oldStatus: previousStatus,
+        newStatus: status,
+        retryCount: 0,
+      });
       console.log(
-        `✅ Status update email sent to ${updatedReservation.guestId.email}`,
+        `📧 Email queued for reservation ${updatedReservation.reservationNumber}`,
       );
-    } catch (emailError) {
-      console.error(
-        "❌ Failed to send status update email:",
-        emailError.message,
+    } else {
+      console.warn(
+        `⚠️ Cannot queue email: Missing guest email for reservation ${updatedReservation.reservationNumber}`,
       );
-      // Don't fail the reservation update if email fails
     }
 
+    // Create notification
     await createNotification({
       actorUserId: req.user?._id || userId || null,
       type: "reservation",
       title: "Reservation Status Updated",
-      description: `Reservation ${updatedReservation.reservationNumber} changed from ${previousStatus} to ${status}. Email notification sent to guest.`,
+      description: `Reservation ${updatedReservation.reservationNumber} changed from ${previousStatus} to ${status}. Email notification queued.`,
       source: "Front Desk",
       entity: {
         kind: "Reservation",
@@ -326,6 +337,7 @@ export const updateReservationStatus = async (req, res) => {
       },
     });
 
+    // Broadcast update
     broadcast({
       type: "RESERVATION_UPDATED",
       action: "status_update",
@@ -340,7 +352,7 @@ export const updateReservationStatus = async (req, res) => {
       reservation: updatedReservation,
       previousStatus,
       newStatus: status,
-      emailSent: true,
+      emailQueued: true,
     });
   } catch (error) {
     await session.abortTransaction();
