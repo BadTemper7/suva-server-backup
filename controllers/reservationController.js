@@ -208,8 +208,8 @@ export const addReservation = async (req, res) => {
     await createNotification({
       actorUserId: req.user?._id || null,
       type: "reservation",
-      title: "Reservation Updated",
-      description: `Reservation ${fullReservation.reservationNumber} was updated (dates/rooms/billing recalculated).`,
+      title: "New Reservation Created",
+      description: `Reservation ${fullReservation.reservationNumber} was created for ${fullReservation.guestId?.firstName} ${fullReservation.guestId?.lastName}. Status: ${fullReservation.status}.`,
       source: "Front Desk",
       entity: {
         kind: "Reservation",
@@ -217,26 +217,28 @@ export const addReservation = async (req, res) => {
       },
     });
 
-    // Broadcast new reservation (keep existing)
+    // Broadcast new reservation
     broadcast({
       type: "RESERVATION_UPDATED",
       action: "create",
       reservation: fullReservation,
     });
-    try {
-      await sendReservationStatusEmail(
-        fullReservation,
-        fullReservation.guestId,
-        null,
-        fullReservation.status,
-      );
+
+    // 🚀 ADD EMAIL TO QUEUE INSTEAD OF SENDING DIRECTLY
+    if (fullReservation.guestId && fullReservation.guestId.email) {
+      emailQueue.add({
+        reservation: fullReservation,
+        guest: fullReservation.guestId,
+        oldStatus: null,
+        newStatus: fullReservation.status,
+        retryCount: 0,
+      });
       console.log(
-        `✅ Reservation confirmation email sent to ${fullReservation.guestId.email}`,
+        `📧 Email queued for new reservation ${fullReservation.reservationNumber}`,
       );
-    } catch (emailError) {
-      console.error(
-        "❌ Failed to send reservation confirmation email:",
-        emailError.message,
+    } else {
+      console.warn(
+        `⚠️ Cannot queue email: Missing guest email for reservation ${fullReservation.reservationNumber}`,
       );
     }
 
@@ -244,6 +246,7 @@ export const addReservation = async (req, res) => {
       success: true,
       message: "Reservation created successfully",
       reservation: fullReservation,
+      emailQueued: true,
     });
   } catch (error) {
     console.error(error);
