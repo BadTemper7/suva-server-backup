@@ -10,7 +10,11 @@ import {
   deleteMultipleMessages,
   getMessageStats,
 } from "../controllers/messageController.js";
-import { protect, adminOnly } from "../middleware/authMiddleware.js";
+import {
+  protect,
+  adminOnly,
+  receptionistOrAdmin,
+} from "../middleware/authMiddleware.js";
 import { protectGuest } from "../middleware/guestAuthMiddleware.js";
 
 const router = express.Router();
@@ -19,8 +23,8 @@ const router = express.Router();
 router.post("/", protectGuest, createMessage);
 
 // Protected admin routes
-router.get("/", protect, adminOnly, getMessages);
-router.get("/stats", protect, adminOnly, getMessageStats);
+router.get("/", protect, receptionistOrAdmin, getMessages);
+router.get("/stats", protect, receptionistOrAdmin, getMessageStats);
 router.get("/:id", protect, adminOnly, getMessageById);
 router.put("/:id/reply", protect, adminOnly, replyToMessage);
 router.put("/:id/status", protect, adminOnly, updateMessageStatus);
