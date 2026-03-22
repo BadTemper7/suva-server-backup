@@ -2,8 +2,72 @@ import Guest from "../models/Guest.js";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import jwt from "jsonwebtoken";
+import { sendWelcomeEmail } from "../config/email.js";
 
 /* -------------------- CREATE GUEST -------------------- */
+export const registerGuest = async (req, res) => {
+  try {
+    const { firstName, lastName, contactNumber, email, password } = req.body;
+
+    if (!firstName || !lastName || !contactNumber || !email || !password) {
+      return res.status(400).json({
+        message: "All fields are required for registration",
+      });
+    }
+
+    // Check if email already exists
+    const existingGuest = await Guest.findOne({
+      email: email.trim().toLowerCase(),
+    });
+    if (existingGuest) {
+      return res.status(409).json({
+        message: "Email already registered",
+        exists: true,
+      });
+    }
+
+    // Validate password strength
+    if (password.length < 6) {
+      return res.status(400).json({
+        message: "Password must be at least 6 characters long",
+      });
+    }
+
+    const guest = await Guest.create({
+      firstName: String(firstName).trim(),
+      lastName: String(lastName).trim(),
+      contactNumber: String(contactNumber).trim(),
+      email: String(email).trim().toLowerCase(),
+      password,
+      hasAccount: true,
+      accountType: "registered",
+      status: "active",
+    });
+
+    const guestResponse = guest.toObject();
+    delete guestResponse.password;
+
+    // 🚀 SEND WELCOME EMAIL
+    try {
+      await sendWelcomeEmail(guestResponse);
+      console.log(`✅ Welcome email sent to ${guestResponse.email}`);
+    } catch (emailError) {
+      console.error(`❌ Failed to send welcome email: ${emailError.message}`);
+      // Don't fail the registration if email fails, just log it
+    }
+
+    return res.status(201).json({
+      success: true,
+      message: "Account created successfully. Welcome email sent!",
+      guest: guestResponse,
+      emailSent: true,
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
+
+/* -------------------- CREATE GUEST (Walk-in) -------------------- */
 export const createGuest = async (req, res) => {
   try {
     const {
@@ -59,70 +123,29 @@ export const createGuest = async (req, res) => {
     const guestResponse = guest.toObject();
     delete guestResponse.password;
 
+    // Send welcome email if account was created with password
+    if (password && email) {
+      try {
+        await sendWelcomeEmail(guestResponse);
+        console.log(`✅ Welcome email sent to ${guestResponse.email}`);
+      } catch (emailError) {
+        console.error(`❌ Failed to send welcome email: ${emailError.message}`);
+      }
+    }
+
     return res.status(201).json({
       success: true,
       message: password
-        ? "Guest registered successfully"
+        ? "Guest registered successfully. Welcome email sent!"
         : "Walk-in guest created successfully",
       guest: guestResponse,
       hasAccount: !!password,
+      emailSent: !!password,
     });
   } catch (error) {
     return res.status(500).json({ message: error.message });
   }
 };
-export const registerGuest = async (req, res) => {
-  try {
-    const { firstName, lastName, contactNumber, email, password } = req.body;
-
-    if (!firstName || !lastName || !contactNumber || !email || !password) {
-      return res.status(400).json({
-        message: "All fields are required for registration",
-      });
-    }
-
-    // Check if email already exists
-    const existingGuest = await Guest.findOne({
-      email: email.trim().toLowerCase(),
-    });
-    if (existingGuest) {
-      return res.status(409).json({
-        message: "Email already registered",
-        exists: true,
-      });
-    }
-
-    // Validate password strength
-    if (password.length < 6) {
-      return res.status(400).json({
-        message: "Password must be at least 6 characters long",
-      });
-    }
-
-    const guest = await Guest.create({
-      firstName: String(firstName).trim(),
-      lastName: String(lastName).trim(),
-      contactNumber: String(contactNumber).trim(),
-      email: String(email).trim().toLowerCase(),
-      password,
-      hasAccount: true,
-      accountType: "registered",
-      status: "active",
-    });
-
-    const guestResponse = guest.toObject();
-    delete guestResponse.password;
-
-    return res.status(201).json({
-      success: true,
-      message: "Account created successfully",
-      guest: guestResponse,
-    });
-  } catch (error) {
-    return res.status(500).json({ message: error.message });
-  }
-};
-
 /* -------------------- LOGIN GUEST -------------------- */
 export const loginGuest = async (req, res) => {
   try {

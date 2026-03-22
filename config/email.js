@@ -723,7 +723,7 @@ export const sendReservationStatusEmail = async (
             <strong>Suva's Place Resort</strong><br>
             Antipolo City, Rizal, Philippines<br>
             📞 (02) 8123 4567<br>
-            📧 info@suvasplace.com<br>
+            📧 suvasplaceinc@gmail.com<br>
             🌐 www.suvasplace.com
           </div>
           
@@ -738,4 +738,347 @@ export const sendReservationStatusEmail = async (
   `;
 
   return await sendEmail({ to: guest.email, subject: template.subject, html });
+};
+export const sendWelcomeEmail = async (guest) => {
+  const subject = "Welcome to Suva's Place Resort! 🏖️";
+
+  const html = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>Welcome to Suva's Place Resort</title>
+      <style>
+        * {
+          margin: 0;
+          padding: 0;
+          box-sizing: border-box;
+        }
+        
+        body {
+          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+          line-height: 1.6;
+          background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
+          padding: 20px;
+        }
+        
+        .container {
+          max-width: 600px;
+          margin: 0 auto;
+          background: #ffffff;
+          border-radius: 24px;
+          overflow: hidden;
+          box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+        }
+        
+        /* Header with brand colors */
+        .header {
+          background: linear-gradient(135deg, #f59e0b, #d97706);
+          padding: 40px 30px;
+          text-align: center;
+          position: relative;
+          overflow: hidden;
+        }
+        
+        /* Decorative sun rays effect */
+        .header::before {
+          content: '';
+          position: absolute;
+          top: -50%;
+          right: -50%;
+          width: 200%;
+          height: 200%;
+          background: radial-gradient(circle, rgba(255,215,0,0.2) 0%, transparent 70%);
+          animation: shimmer 10s infinite;
+        }
+        
+        @keyframes shimmer {
+          0%, 100% { transform: translate(0, 0); }
+          50% { transform: translate(20%, 20%); }
+        }
+        
+        /* Logo styling */
+        .logo-wrapper {
+          margin-bottom: 20px;
+          position: relative;
+          display: inline-block;
+        }
+        
+        .logo {
+          width: 80px;
+          height: 80px;
+          background: white;
+          border-radius: 50%;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.2);
+          position: relative;
+          transition: transform 0.3s ease;
+        }
+        
+        .logo img {
+          width: 60px;
+          height: 60px;
+          object-fit: contain;
+        }
+        
+        .brand-name {
+          font-family: 'Dancing Script', cursive;
+          font-size: 32px;
+          font-weight: bold;
+          color: white;
+          margin-bottom: 8px;
+          text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.2);
+          letter-spacing: 1px;
+        }
+        
+        .brand-subtitle {
+          font-family: 'Times New Roman', serif;
+          font-size: 14px;
+          color: rgba(255, 255, 255, 0.9);
+          letter-spacing: 1px;
+          font-style: italic;
+        }
+        
+        .content {
+          padding: 40px 30px;
+          background: white;
+        }
+        
+        .greeting {
+          font-size: 24px;
+          color: #78350f;
+          margin-bottom: 20px;
+          font-weight: 600;
+        }
+        
+        .greeting strong {
+          color: #b45309;
+        }
+        
+        .welcome-text {
+          color: #6b4c2c;
+          margin-bottom: 30px;
+          line-height: 1.8;
+          font-size: 16px;
+        }
+        
+        .feature-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+          gap: 20px;
+          margin: 30px 0;
+        }
+        
+        .feature-card {
+          background: linear-gradient(135deg, #fffbeb, #fef3c7);
+          border-radius: 16px;
+          padding: 20px;
+          text-align: center;
+          transition: transform 0.3s ease;
+          border: 1px solid rgba(245, 158, 11, 0.2);
+        }
+        
+        .feature-card:hover {
+          transform: translateY(-4px);
+        }
+        
+        .feature-icon {
+          font-size: 32px;
+          margin-bottom: 12px;
+        }
+        
+        .feature-title {
+          font-weight: 600;
+          color: #b45309;
+          margin-bottom: 8px;
+        }
+        
+        .feature-desc {
+          font-size: 12px;
+          color: #92400e;
+        }
+        
+        .button {
+          display: inline-block;
+          padding: 14px 32px;
+          background: linear-gradient(135deg, #f59e0b, #d97706);
+          color: white;
+          text-decoration: none;
+          border-radius: 50px;
+          font-weight: 600;
+          margin: 20px 0;
+          transition: all 0.3s ease;
+          box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+        }
+        
+        .button:hover {
+          transform: translateY(-2px);
+          box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.2);
+        }
+        
+        .help-section {
+          margin-top: 30px;
+          padding: 20px;
+          background: linear-gradient(135deg, #fffbeb, #fef3c7);
+          border-radius: 16px;
+          border-left: 4px solid #f59e0b;
+        }
+        
+        .help-section p {
+          color: #92400e;
+          font-size: 14px;
+          margin: 0;
+        }
+        
+        .footer {
+          background: linear-gradient(135deg, #78350f, #92400e);
+          padding: 30px;
+          text-align: center;
+          color: white;
+        }
+        
+        .tagline {
+          font-family: 'Dancing Script', cursive;
+          font-size: 18px;
+          font-weight: 500;
+          color: #fde68a;
+          margin-bottom: 20px;
+          letter-spacing: 0.5px;
+        }
+        
+        .established {
+          font-family: 'Times New Roman', serif;
+          font-size: 12px;
+          letter-spacing: 2px;
+          color: #fcd34d;
+          margin: 10px 0;
+          text-transform: uppercase;
+        }
+        
+        .divider {
+          width: 60px;
+          height: 2px;
+          background: linear-gradient(90deg, transparent, #f59e0b, transparent);
+          margin: 20px auto;
+        }
+        
+        .contact-info {
+          font-size: 12px;
+          line-height: 1.8;
+          color: #fed7aa;
+          margin-top: 20px;
+        }
+        
+        .footer-text {
+          font-size: 11px;
+          color: #fed7aa;
+          margin-top: 20px;
+          opacity: 0.8;
+        }
+        
+        @media (max-width: 600px) {
+          .content {
+            padding: 30px 20px;
+          }
+          
+          .brand-name {
+            font-size: 24px;
+          }
+          
+          .feature-grid {
+            grid-template-columns: 1fr;
+          }
+        }
+        
+        @import url('https://fonts.googleapis.com/css2?family=Dancing+Script:wght@400;500;600;700&display=swap');
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <div class="header">
+          <div class="logo-wrapper">
+            <div class="logo">
+              <img src="${process.env.LOGO_URL || "https://suvasplaceresort.com/images/small-logo.png"}" alt="Suva's Place Resort" />
+            </div>
+          </div>
+          <div class="brand-name">Suva's Place</div>
+          <div class="brand-subtitle">Resort Antipolo</div>
+        </div>
+        
+        <div class="content">
+          <div class="greeting">
+            Welcome, <strong>${guest.firstName} ${guest.lastName}</strong>! 🎉
+          </div>
+          
+          <div class="welcome-text">
+            Thank you for creating an account with Suva's Place Resort. We're thrilled to have you as part of our family! Your gateway to unforgettable tropical escapes and relaxing getaways awaits.
+          </div>
+          
+          <div class="feature-grid">
+            <div class="feature-card">
+              <div class="feature-icon">🏊</div>
+              <div class="feature-title">Swimming Pool</div>
+              <div class="feature-desc">Relax in our crystal-clear pool</div>
+            </div>
+            <div class="feature-card">
+              <div class="feature-icon">🍽️</div>
+              <div class="feature-title">Dining Options</div>
+              <div class="feature-desc">Delicious local and international cuisine</div>
+            </div>
+            <div class="feature-card">
+              <div class="feature-icon">📶</div>
+              <div class="feature-title">Free Wi-Fi</div>
+              <div class="feature-desc">Stay connected throughout your stay</div>
+            </div>
+            <div class="feature-card">
+              <div class="feature-icon">🚗</div>
+              <div class="feature-title">Free Parking</div>
+              <div class="feature-desc">Secure parking for all guests</div>
+            </div>
+          </div>
+          
+          <div style="text-align: center;">
+            <a href="${process.env.FRONTEND_URL || "http://localhost:5173"}/reservations" class="button">
+              Make Your First Reservation →
+            </a>
+          </div>
+          
+          <div class="help-section">
+            <p>
+              <strong>💡 Quick Tips:</strong><br>
+              • Log in to view your booking history<br>
+              • Save your favorite rooms for future stays<br>
+              • Contact us for special requests<br>
+              • Check out our seasonal promotions
+            </p>
+          </div>
+        </div>
+        
+        <div class="footer">
+          <div class="tagline">Have Fun Under The Sun</div>
+          <div class="established">Est. 1971</div>
+          <div class="divider"></div>
+          
+          <div class="contact-info">
+            <strong>Suva's Place Resort</strong><br>
+            Antipolo City, Rizal, Philippines<br>
+            📞 (02) 8123 4567<br>
+            📧 suvasplaceinc@gmail.com<br>
+            🌐 www.${process.env.FRONTEND_URL}
+          </div>
+          
+          <div class="footer-text">
+            This is an automated welcome email from Suva's Place Resort.<br>
+            If you didn't create this account, please contact us immediately.
+          </div>
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
+
+  return await sendEmail({ to: guest.email, subject, html });
 };
