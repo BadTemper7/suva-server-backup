@@ -3,8 +3,7 @@ import cors from "cors";
 import dotenv from "dotenv";
 import { connectDB } from "./utils/db.js";
 import User from "./models/userModel.js";
-import { cancelExpiredPendings } from "./jobs/cancelExpiredPendings.js";
-import { initializeJobs, triggerJobsManually } from "./jobs/scheduler.js";
+import { initScheduler, runJobsNow } from "./jobs/scheduler.js";
 import { startAutoUnlockJob } from "./jobs/autoUnlockAccounts.js";
 
 import userRoutes from "./routes/userRoutes.js";
@@ -43,6 +42,7 @@ app.use(cors());
 app.use(express.json());
 
 dns.setServers(["1.1.1.1", "8.8.8.8"]);
+
 // ✅ Ensure Superadmin exists
 async function ensureSuperAdmin() {
   const existing = await User.findOne({ username: "suva-admin" });
@@ -58,46 +58,41 @@ async function ensureSuperAdmin() {
       status: "active",
       protected: true, // Cannot be deleted
     });
-    console.log("Superadmin created!");
+    console.log("✅ Superadmin created!");
   }
 }
-async function deleteSuperadmin(id) {
-  try {
-    const deleted = await User.deleteOne({ _id: id });
-    if (deleted.deletedCount > 0) {
-      console.log("Superadmin deleted successfully!");
-    } else {
-      console.log("Superadmin not found or already deleted.");
-    }
-  } catch (err) {
-    console.error("Error deleting superadmin:", err);
-  }
-}
+
 async function startServer() {
   await connectDB();
-  initializeSettings();
+  console.log("✅ Database connected");
+
+  await initializeSettings();
+  console.log("✅ Settings initialized");
+
   await ensureSuperAdmin(); // ✅ called after DB is connected
+
+  // Start self-ping cron (keeps server awake)
   startSelfPingCron();
+
+  // Initialize all scheduled jobs
+  initScheduler();
+  console.log("✅ Job scheduler initialized");
+
+  // Start auto-unlock accounts job
   startAutoUnlockJob();
+  console.log("✅ Auto-unlock job started");
+
+  // Verify email connection
   await verifyEmailConnection();
+  console.log("✅ Email service verified");
 
   const __filename = fileURLToPath(import.meta.url);
   const __dirname = path.dirname(__filename);
-  const JOB_INTERVAL_MS = 60 * 1000; // every 1 minute
-  // setInterval(async () => {
-  //   try {
-  //     const { matched, modified } = await cancelExpiredPendings();
-  //     if (modified > 0) {
-  //       console.log(`🧹 Auto-cancel expired pendings: modified=${modified}`);
-  //     }
-  //   } catch (err) {
-  //     console.error("❌ Auto-cancel job failed:", err.message);
-  //   }
-  // }, JOB_INTERVAL_MS);
 
+  // Serve static files
   app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
-  // routes
+  // Routes
   app.use("/api/room-types", roomTypeRoutes);
   app.use("/api/rooms", roomRoutes);
   app.use("/api/users", userRoutes);
@@ -123,19 +118,33 @@ async function startServer() {
       status: "healthy",
       timestamp: new Date().toISOString(),
       uptime: process.uptime(),
+      jobs: {
+        expiredReservations: "running every 2 hours",
+        expiredReceipts: "running every 6 hours",
+        autoUnlockAccounts: "running every 30 minutes",
+        selfPing: "running every 10 minutes",
+      },
     });
   });
 
   // Root endpoint
   app.get("/", (req, res) => {
     res.json({
-      message: "Server is running",
+      message: "Suva's Place Resort API Server",
+      version: "1.0.0",
       timestamp: new Date().toISOString(),
-      endpoints: [
-        "/health - Health check",
-        "/api/* - API endpoints",
-        "/uploads/* - Static files",
-      ],
+      status: "running",
+      endpoints: {
+        health: "/health - Health check with job status",
+        api: "/api/* - All API endpoints",
+        uploads: "/uploads/* - Static files",
+      },
+      jobs: {
+        expiredReservations: "Cancels pending reservations after 24 hours",
+        expiredReceipts: "Deletes pending receipts after 24 hours",
+        autoUnlockAccounts: "Unlocks locked user accounts after timeout",
+        selfPing: "Keeps server awake by pinging health endpoint",
+      },
     });
   });
 
@@ -145,44 +154,100 @@ async function startServer() {
   // Attach WebSocket to same server
   createWebSocketServer(server);
 
-  server.listen(PORT, () =>
-    console.log(`Server + WebSocket running on port ${PORT}`),
-  );
+  server.listen(PORT, () => {
+    console.log(`\n🚀 Server + WebSocket running on port ${PORT}`);
+    console.log(`📍 Environment: ${process.env.NODE_ENV || "development"}`);
+    console.log(`🔗 API URL: http://localhost:${PORT}/api`);
+    console.log(`💚 Health check: http://localhost:${PORT}/health`);
+    console.log(`\n📋 Job Status:`);
+    console.log(`   - Expired reservations: running every 2 hours`);
+    console.log(`   - Expired receipts: running every 6 hours`);
+    console.log(`   - Auto-unlock accounts: running every 30 minutes`);
+    console.log(`   - Self-ping: running every 10 minutes`);
+
+    // Run initial cleanup jobs on startup
+    runJobsNow()
+      .then((results) => {
+        console.log(`\n🧹 Initial cleanup completed:`);
+        if (results.reservations.modified > 0) {
+          console.log(
+            `   - Cancelled ${results.reservations.modified} expired reservations`,
+          );
+        }
+        if (results.receipts.deletedCount > 0) {
+          console.log(
+            `   - Deleted ${results.receipts.deletedCount} expired receipts`,
+          );
+        }
+        if (
+          results.reservations.modified === 0 &&
+          results.receipts.deletedCount === 0
+        ) {
+          console.log(`   - No expired items found to clean up`);
+        }
+      })
+      .catch((err) => {
+        console.error("❌ Initial cleanup failed:", err.message);
+      });
+  });
 }
+
 function startSelfPingCron() {
   // Schedule self-ping every 10 minutes
-  // Cron pattern: '*/10 * * * *' means every 10 minutes
   cron.schedule("*/10 * * * *", async () => {
     try {
       const serverUrl = process.env.SERVER_URL || `http://localhost:${PORT}`;
-      console.log(
-        `[${new Date().toISOString()}] Self-pinging server at ${serverUrl}/health`,
-      );
+      const timestamp = new Date().toISOString();
+
+      console.log(`\n[${timestamp}] 🔄 Self-pinging server...`);
 
       // Ping the health endpoint
       const response = await fetch(`${serverUrl}/health`);
 
       if (response.ok) {
         const data = await response.json();
-        console.log(`Server ping successful:`, data);
+        console.log(`✅ Server ping successful at ${timestamp}`);
+        console.log(`   - Uptime: ${Math.floor(data.uptime / 60)} minutes`);
       } else {
-        console.log(`Server ping failed with status: ${response.status}`);
+        console.log(`⚠️ Server ping returned status: ${response.status}`);
       }
     } catch (error) {
-      console.error("Error during self-ping:", error.message);
+      console.error("❌ Error during self-ping:", error.message);
 
       // If the server is running locally, try to ping localhost
       if (process.env.NODE_ENV !== "production") {
         try {
           const localResponse = await fetch(`http://localhost:${PORT}/health`);
-          console.log(`Local ping result: ${localResponse.status}`);
+          console.log(`🔄 Local ping result: ${localResponse.status}`);
         } catch (localError) {
-          console.error("Local ping also failed:", localError.message);
+          console.error("❌ Local ping also failed:", localError.message);
         }
       }
     }
   });
 
-  console.log("Self-ping cron job scheduled (every 10 minutes)");
+  console.log("✅ Self-ping cron job scheduled (every 10 minutes)");
 }
+
+// Handle graceful shutdown
+process.on("SIGTERM", () => {
+  console.log("🛑 SIGTERM received. Shutting down gracefully...");
+  process.exit(0);
+});
+
+process.on("SIGINT", () => {
+  console.log("🛑 SIGINT received. Shutting down gracefully...");
+  process.exit(0);
+});
+
+// Handle uncaught exceptions
+process.on("uncaughtException", (error) => {
+  console.error("❌ Uncaught Exception:", error);
+  // Keep the server running, but log the error
+});
+
+process.on("unhandledRejection", (reason, promise) => {
+  console.error("❌ Unhandled Rejection at:", promise, "reason:", reason);
+});
+
 startServer();

@@ -1,90 +1,84 @@
+// jobs/scheduler.js
 import cron from "node-cron";
-import {
-  cancelUnpaidReservationsJob,
-  cancelOldUnpaidReservations,
-} from "./reservationCleanupJob.js";
-import {
-  markNoShowReservationsJob,
-  markNoShowAfterCheckOutJob,
-} from "./noShowJob.js";
+import { cancelExpiredReservations } from "./cancelExpiredReservations.js";
+import { cancelExpiredReceipts } from "./cancelExpiredReceipts.js";
 
-/**
- * Initialize and schedule all background jobs
- */
-export const initializeJobs = () => {
-  console.log("Initializing background jobs...");
+// Initialize all scheduled jobs
+export function initScheduler() {
+  console.log("\n🕐 Initializing job scheduler...");
 
-  // 1. Cancel unpaid pending reservations - Run every hour
-  cron.schedule("0 * * * *", async () => {
-    console.log("Running unpaid reservation cleanup job...");
+  // Cancel expired reservations - every 2 hours
+  cron.schedule("0 */2 * * *", async () => {
+    const timestamp = new Date().toISOString();
+    console.log(`\n[${timestamp}] 🔄 Running: Cancel Expired Reservations`);
     try {
-      await cancelUnpaidReservationsJob();
+      const result = await cancelExpiredReservations();
+      if (result.modified > 0) {
+        console.log(`✅ ${result.modified} expired reservations cancelled`);
+        if (result.deletedImagesCount) {
+          console.log(
+            `   - Deleted ${result.deletedImagesCount} images from Cloudinary`,
+          );
+        }
+      }
     } catch (error) {
-      console.error("Failed to run unpaid reservation cleanup job:", error);
+      console.error(
+        "❌ Error in cancelExpiredReservations job:",
+        error.message,
+      );
     }
   });
 
-  // 2. Cancel old unpaid reservations (24+ hours old) - Run daily at 2 AM
-  cron.schedule("0 2 * * *", async () => {
-    console.log("Running old unpaid reservation cleanup job...");
+  // Cancel expired receipts - every 6 hours
+  cron.schedule("0 */6 * * *", async () => {
+    const timestamp = new Date().toISOString();
+    console.log(`\n[${timestamp}] 🔄 Running: Cancel Expired Receipts`);
     try {
-      await cancelOldUnpaidReservations(24); // 24 hours old
+      const result = await cancelExpiredReceipts();
+      if (result.deletedCount > 0) {
+        console.log(`✅ ${result.deletedCount} expired receipts deleted`);
+        if (result.deletedImagesCount) {
+          console.log(
+            `   - Deleted ${result.deletedImagesCount} images from Cloudinary`,
+          );
+        }
+        if (result.recalculatedBillings) {
+          console.log(
+            `   - Recalculated ${result.recalculatedBillings} billings`,
+          );
+        }
+      }
     } catch (error) {
-      console.error("Failed to run old unpaid reservation cleanup job:", error);
+      console.error("❌ Error in cancelExpiredReceipts job:", error.message);
     }
   });
 
-  // 3. Mark no-show reservations - Run daily at 6 PM (after check-in time)
-  cron.schedule("0 18 * * *", async () => {
-    console.log("Running no-show reservation job...");
-    try {
-      await markNoShowReservationsJob();
-    } catch (error) {
-      console.error("Failed to run no-show reservation job:", error);
-    }
-  });
+  console.log("✅ Job scheduler initialized");
+  console.log("   - Expired reservations: every 2 hours");
+  console.log("   - Expired receipts: every 6 hours");
+}
 
-  // 4. Mark no-show after check-out - Run daily at midnight
-  cron.schedule("0 0 * * *", async () => {
-    console.log("Running no-show after check-out job...");
-    try {
-      await markNoShowAfterCheckOutJob();
-    } catch (error) {
-      console.error("Failed to run no-show after check-out job:", error);
-    }
-  });
+// Run jobs immediately on startup
+export async function runJobsNow() {
+  console.log("\n🚀 Running initial cleanup jobs...");
 
-  console.log("Background jobs initialized and scheduled");
-  console.log("Scheduled jobs:");
-  console.log("- Unpaid reservation cleanup: Every hour");
-  console.log("- Old unpaid reservation cleanup: Daily at 2 AM");
-  console.log("- No-show reservation check: Daily at 6 PM");
-  console.log("- No-show after check-out: Daily at midnight");
-};
+  let reservationResult = { modified: 0, message: "Skipped" };
+  let receiptResult = { deletedCount: 0, message: "Skipped" };
 
-/**
- * Manual trigger for testing/debugging
- */
-export const triggerJobsManually = {
-  cancelUnpaidReservations: async () => {
-    console.log("Manually triggering unpaid reservation cleanup...");
-    return await cancelUnpaidReservationsJob();
-  },
+  try {
+    reservationResult = await cancelExpiredReservations();
+  } catch (error) {
+    console.error("❌ Error running cancelExpiredReservations:", error.message);
+  }
 
-  cancelOldUnpaidReservations: async (hours = 24) => {
-    console.log(
-      `Manually triggering old unpaid reservation cleanup (older than ${hours} hours)...`,
-    );
-    return await cancelOldUnpaidReservations(hours);
-  },
+  try {
+    receiptResult = await cancelExpiredReceipts();
+  } catch (error) {
+    console.error("❌ Error running cancelExpiredReceipts:", error.message);
+  }
 
-  markNoShowReservations: async () => {
-    console.log("Manually triggering no-show reservation check...");
-    return await markNoShowReservationsJob();
-  },
-
-  markNoShowAfterCheckOut: async () => {
-    console.log("Manually triggering no-show after check-out check...");
-    return await markNoShowAfterCheckOutJob();
-  },
-};
+  return {
+    reservations: reservationResult,
+    receipts: receiptResult,
+  };
+}

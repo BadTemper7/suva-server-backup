@@ -57,11 +57,11 @@ export const getReservationsReport = async (req, res) => {
       query.status = status;
     }
 
-    // Fix: Only populate necessary fields, don't populate receipts here
+    // Fetch reservations with necessary population
     const reservations = await Reservation.find(query)
       .populate({
         path: "guestId",
-        select: "firstName lastName email phone",
+        select: "firstName lastName email contactNumber",
       })
       .populate({
         path: "paymentOption",
@@ -69,9 +69,45 @@ export const getReservationsReport = async (req, res) => {
       })
       .populate({
         path: "userId",
-        select: "name email",
+        select: "firstName lastName email",
       })
       .sort({ createdAt: -1 });
+
+    // Calculate new reservations (created within last 7 days from current date, not from report period)
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+    const newReservations = reservations.filter(
+      (r) => new Date(r.createdAt) >= sevenDaysAgo,
+    ).length;
+
+    // Calculate average nights
+    let totalNights = 0;
+    let validNightsCount = 0;
+
+    reservations.forEach((r) => {
+      if (r.nights && r.nights > 0) {
+        totalNights += r.nights;
+        validNightsCount++;
+      }
+    });
+
+    const averageNights =
+      validNightsCount > 0
+        ? parseFloat((totalNights / validNightsCount).toFixed(1))
+        : 0;
+
+    // Calculate cancellation rate (includes cancelled, expired, no_show)
+    const cancelledCount = reservations.filter(
+      (r) =>
+        r.status === "cancelled" ||
+        r.status === "expired" ||
+        r.status === "no_show",
+    ).length;
+
+    const cancellationRate =
+      reservations.length > 0
+        ? parseFloat(((cancelledCount / reservations.length) * 100).toFixed(1))
+        : 0;
 
     // Get room assignments for each reservation
     const reservationsWithRooms = await Promise.all(
@@ -80,12 +116,20 @@ export const getReservationsReport = async (req, res) => {
           reservationId: reservation._id,
         }).populate({
           path: "roomId",
-          select: "roomNumber roomType",
+          select: "roomNumber roomType capacity",
+          populate: {
+            path: "roomType",
+            select: "name",
+          },
         });
 
         return {
           ...reservation.toObject(),
-          rooms: rooms.map((rr) => rr.roomId),
+          rooms: rooms.map((rr) => ({
+            _id: rr.roomId?._id,
+            roomNumber: rr.roomId?.roomNumber,
+            roomType: rr.roomId?.roomType,
+          })),
         };
       }),
     );
@@ -95,6 +139,9 @@ export const getReservationsReport = async (req, res) => {
       period,
       dateRange: { start, end },
       totalReservations: reservations.length,
+      newReservations,
+      averageNights,
+      cancellationRate,
       reservations: reservationsWithRooms,
     });
   } catch (error) {
