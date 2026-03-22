@@ -1,6 +1,7 @@
 import Guest from "../models/Guest.js";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
+import jwt from "jsonwebtoken";
 
 /* -------------------- CREATE GUEST -------------------- */
 export const createGuest = async (req, res) => {
@@ -168,9 +169,20 @@ export const loginGuest = async (req, res) => {
     // Don't return password
     const guestResponse = guest.toObject();
     delete guestResponse.password;
-
+    const token = jwt.sign(
+      {
+        id: guest._id,
+        email: guest.email,
+        firstName: guest.firstName,
+        lastName: guest.lastName,
+        role: "guest",
+      },
+      process.env.JWT_SECRET,
+      { expiresIn: "7d" },
+    );
     return res.status(200).json({
       success: true,
+      token,
       message: "Login successful",
       guest: guestResponse,
     });

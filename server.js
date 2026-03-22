@@ -24,6 +24,7 @@ import receiptRoutes from "./routes/receiptRoutes.js";
 import reportRoutes from "./routes/reportRoutes.js";
 import settingsRoutes from "./routes/settingsRoutes.js";
 import emailTest from "./routes/emailTest.js";
+import messageRoutes from "./routes/messageRoutes.js";
 import { initializeSettings } from "./controllers/settingsController.js";
 import dns from "dns";
 import path from "path";
@@ -114,6 +115,7 @@ async function startServer() {
   app.use("/api/reports", reportRoutes);
   app.use("/api/settings", settingsRoutes);
   app.use("/api/email", emailTest);
+  app.use("/api/messages", messageRoutes);
 
   // Health check endpoint
   app.get("/health", (req, res) => {

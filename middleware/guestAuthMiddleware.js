@@ -28,12 +28,11 @@ export const checkGuestAccountLock = async (req, res, next) => {
 export const protectGuest = async (req, res, next) => {
   const authHeader = req.headers.authorization;
 
+  // If no token, continue as unauthenticated guest
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    console.log("❌ Guest: No Bearer token found");
-    return res.status(401).json({
-      success: false,
-      message: "Access denied. Please log in to continue.",
-    });
+    console.log("ℹ️ Guest: No token found, continuing as unauthenticated");
+    req.guest = null;
+    return next();
   }
 
   const token = authHeader.split(" ")[1];
@@ -50,15 +49,15 @@ export const protectGuest = async (req, res, next) => {
 
     // Verify role is guest
     if (decoded.role !== "guest") {
-      console.log("❌ Invalid role for guest route");
-      return res.status(403).json({
-        success: false,
-        message: "Access forbidden: Invalid user type",
-      });
+      console.log(
+        "⚠️ Invalid role for guest route, continuing as unauthenticated",
+      );
+      req.guest = null;
+      return next();
     }
 
-    // Set req.user for guest
-    req.user = {
+    // Set req.guest (not req.user) for guest
+    req.guest = {
       id: decoded.id,
       email: decoded.email,
       firstName: decoded.firstName,
@@ -66,71 +65,81 @@ export const protectGuest = async (req, res, next) => {
       role: decoded.role,
     };
 
-    console.log("req.user set for guest:", req.user);
+    console.log("req.guest set:", req.guest);
 
     // Verify guest exists and is active
     const guest = await Guest.findById(decoded.id);
     if (!guest) {
-      console.log("❌ Guest not found in database");
-      return res.status(401).json({
-        success: false,
-        message: "Guest account not found",
-      });
+      console.log(
+        "⚠️ Guest not found in database, continuing as unauthenticated",
+      );
+      req.guest = null;
+      return next();
     }
 
     if (guest.status !== "active") {
-      console.log("❌ Guest account is inactive");
-      return res.status(401).json({
-        success: false,
-        message: "Your account is inactive. Please contact support.",
-      });
+      console.log(
+        "⚠️ Guest account is inactive, continuing as unauthenticated",
+      );
+      req.guest = null;
+      return next();
     }
 
-    console.log("✅ Guest verified, proceeding...");
+    console.log("✅ Guest verified, proceeding with authentication");
     next();
   } catch (err) {
     console.error("❌ Guest JWT verification failed:", err.message);
-
-    if (err.name === "TokenExpiredError") {
-      return res.status(401).json({
-        success: false,
-        message: "Session expired. Please log in again.",
-      });
-    }
-
-    if (err.name === "JsonWebTokenError") {
-      return res.status(401).json({
-        success: false,
-        message: "Invalid session. Please log in again.",
-      });
-    }
-
-    return res.status(401).json({
-      success: false,
-      message: "Authentication failed. Please log in.",
-    });
+    // Don't block the request, just treat as unauthenticated
+    req.guest = null;
+    next();
   }
 };
 
-// Optional: Verify email middleware
-export const requireEmailVerification = async (req, res, next) => {
-  try {
-    const guest = await Guest.findById(req.user.id);
+// Optional: Require guest authentication for certain routes
+export const requireGuestAuth = async (req, res, next) => {
+  const authHeader = req.headers.authorization;
 
-    if (!guest.emailVerified) {
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    return res.status(401).json({
+      success: false,
+      message: "Authentication required. Please log in.",
+    });
+  }
+
+  const token = authHeader.split(" ")[1];
+
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+
+    if (decoded.role !== "guest") {
       return res.status(403).json({
         success: false,
-        message: "Please verify your email address before continuing",
-        requireVerification: true,
+        message: "Access forbidden: Guest access only.",
+      });
+    }
+
+    req.guest = {
+      id: decoded.id,
+      email: decoded.email,
+      firstName: decoded.firstName,
+      lastName: decoded.lastName,
+      role: "guest",
+    };
+
+    // Verify guest exists and is active
+    const guest = await Guest.findById(decoded.id);
+    if (!guest || guest.status !== "active") {
+      return res.status(401).json({
+        success: false,
+        message: "Invalid or inactive account.",
       });
     }
 
     next();
-  } catch (error) {
-    console.error("Email verification check error:", error);
-    return res.status(500).json({
+  } catch (err) {
+    return res.status(401).json({
       success: false,
-      message: "Server error",
+      message: "Invalid or expired token. Please log in again.",
     });
   }
 };
