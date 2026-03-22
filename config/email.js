@@ -708,7 +708,7 @@ export const sendReservationStatusEmail = async (
           <div class="help-section">
             <p>
               <strong>💡 Have Fun Under The Sun!</strong><br>
-              Need assistance with your reservation? Contact us at (02) 8123 4567 or reply to this email.
+              Need assistance with your reservation? Contact us at +63 976023356 or reply to this email.
             </p>
           </div>
         </div>
@@ -722,7 +722,7 @@ export const sendReservationStatusEmail = async (
           <div class="contact-info">
             <strong>Suva's Place Resort</strong><br>
             Antipolo City, Rizal, Philippines<br>
-            📞 (02) 8123 4567<br>
+            📞 +63 976023356<br>
             📧 suvasplaceinc@gmail.com<br>
             🌐 www.suvasplace.com
           </div>
@@ -1065,7 +1065,7 @@ export const sendWelcomeEmail = async (guest) => {
           <div class="contact-info">
             <strong>Suva's Place Resort</strong><br>
             Antipolo City, Rizal, Philippines<br>
-            📞 (02) 8123 4567<br>
+            📞 +63 976023356<br>
             📧 suvasplaceinc@gmail.com<br>
             🌐 www.${process.env.FRONTEND_URL}
           </div>
