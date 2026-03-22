@@ -59,51 +59,36 @@ export const updateReceiptStatus = async (req, res) => {
 
     await receipt.save();
 
-    // Recalculate billing if the confirmation state changed
-    let updatedBilling = null;
     let updatedReservation = null;
     let reservationStatusUpdate = null;
 
-    const affectsTotals =
-      previousStatus === "confirmed" || status === "confirmed";
+    // IF STATUS IS CONFIRMED AND RESERVATION ID IS PROVIDED, UPDATE RESERVATION STATUS
+    if (status === "confirmed" && reservationId) {
+      // Find and update the reservation
+      const reservation = await Reservation.findById(reservationId);
 
-    if (affectsTotals && receipt.billingId) {
-      try {
-        updatedBilling = await Billing.recalculateBilling(receipt.billingId);
+      if (reservation) {
+        const previousReservationStatus = reservation.status;
 
-        // IF STATUS IS CONFIRMED AND RESERVATION ID IS PROVIDED, UPDATE RESERVATION STATUS
-        if (status === "confirmed" && reservationId) {
-          // Find and update the reservation
-          const reservation = await Reservation.findById(reservationId);
+        // Update reservation to confirmed if not already
+        if (previousReservationStatus !== "confirmed") {
+          reservation.status = "confirmed";
+          await reservation.save();
+          updatedReservation = reservation;
+          reservationStatusUpdate = {
+            from: previousReservationStatus,
+            to: "confirmed",
+            receiptId: receipt._id,
+          };
 
-          if (reservation) {
-            const previousReservationStatus = reservation.status;
-
-            // Update reservation to confirmed if not already
-            if (previousReservationStatus !== "confirmed") {
-              reservation.status = "confirmed";
-              await reservation.save();
-              updatedReservation = reservation;
-              reservationStatusUpdate = {
-                from: previousReservationStatus,
-                to: "confirmed",
-                receiptId: receipt._id,
-              };
-
-              console.log(
-                `✅ Reservation ${reservation._id} (${reservation.reservationNumber}) status updated from ${previousReservationStatus} to confirmed`,
-              );
-            } else {
-              console.log(
-                `ℹ️ Reservation ${reservation._id} already confirmed`,
-              );
-            }
-          } else {
-            console.log(`❌ Reservation not found for ID: ${reservationId}`);
-          }
+          console.log(
+            `✅ Reservation ${reservation._id} (${reservation.reservationNumber}) status updated from ${previousReservationStatus} to confirmed`,
+          );
+        } else {
+          console.log(`ℹ️ Reservation ${reservation._id} already confirmed`);
         }
-      } catch (billingError) {
-        console.error("Error processing billing/reservation:", billingError);
+      } else {
+        console.log(`❌ Reservation not found for ID: ${reservationId}`);
       }
     }
 
@@ -135,8 +120,6 @@ export const updateReceiptStatus = async (req, res) => {
       receipt,
       previousStatus,
       newStatus: status,
-      billingUpdated: !!updatedBilling,
-      updatedBilling,
       reservationUpdated: !!updatedReservation,
       updatedReservation: updatedReservation
         ? {
@@ -350,13 +333,6 @@ export const confirmReceipt = async (req, res) => {
     receipt.status = "confirmed";
     await receipt.save();
 
-    let updatedBilling = null;
-    try {
-      updatedBilling = await Billing.recalculateBilling(receipt.billingId);
-    } catch (billingError) {
-      console.error("Error recalculating billing:", billingError);
-    }
-
     const billingNumber =
       receipt.billingId?.billingNumber || receipt.billingId?._id?.toString?.();
     const paymentTypeName = receipt.paymentType?.name || "Payment Type";
@@ -377,7 +353,6 @@ export const confirmReceipt = async (req, res) => {
     return res.json({
       message: "Receipt confirmed",
       receipt,
-      updatedBilling,
     });
   } catch (error) {
     console.error(error);
@@ -399,15 +374,6 @@ export const rejectReceipt = async (req, res) => {
     receipt.status = "rejected";
     receipt.notes = reason ? `Rejected: ${reason}` : receipt.notes;
     await receipt.save();
-
-    let updatedBilling = null;
-    if (previousStatus === "confirmed") {
-      try {
-        updatedBilling = await Billing.recalculateBilling(receipt.billingId);
-      } catch (billingError) {
-        console.error("Error recalculating billing:", billingError);
-      }
-    }
 
     const billingNumber =
       receipt.billingId?.billingNumber || receipt.billingId?._id?.toString?.();
@@ -431,7 +397,6 @@ export const rejectReceipt = async (req, res) => {
     return res.json({
       message: "Receipt rejected",
       receipt,
-      updatedBilling,
     });
   } catch (error) {
     return res.status(500).json({ error: error.message });
@@ -463,7 +428,6 @@ export const deleteReceipt = async (req, res) => {
     const billingNumber =
       receipt.billingId?.billingNumber || receipt.billingId?._id?.toString?.();
     const paymentTypeName = receipt.paymentType?.name || "Payment Type";
-    const wasConfirmed = receipt.status === "confirmed";
 
     // Delete image from Cloudinary if exists
     if (receipt.receiptImages?.length > 0) {
@@ -475,15 +439,6 @@ export const deleteReceipt = async (req, res) => {
     }
 
     await receipt.deleteOne();
-
-    let updatedBilling = null;
-    if (wasConfirmed && receipt.billingId) {
-      try {
-        updatedBilling = await Billing.recalculateBilling(receipt.billingId);
-      } catch (billingError) {
-        console.error("Error recalculating billing:", billingError);
-      }
-    }
 
     await createNotification({
       actorUserId: req.user?._id || null,
@@ -500,7 +455,6 @@ export const deleteReceipt = async (req, res) => {
 
     return res.json({
       message: "Receipt deleted successfully",
-      updatedBilling,
     });
   } catch (error) {
     return res.status(500).json({ message: error.message });
@@ -537,7 +491,6 @@ export const deleteMultipleReceipts = async (req, res) => {
       });
     }
 
-    const affectedBillingIds = new Set();
     const labels = [];
     const cloudinaryDeletions = [];
 
@@ -555,12 +508,6 @@ export const deleteMultipleReceipts = async (req, res) => {
       labels.push(
         `${billingNumber} (${paymentTypeName})${refInfo}${imageInfo}`,
       );
-
-      if (receipt.status === "confirmed" && receipt.billingId) {
-        affectedBillingIds.add(
-          receipt.billingId._id?.toString?.() || receipt.billingId.toString(),
-        );
-      }
 
       if (receipt.receiptImages?.length > 0) {
         for (const image of receipt.receiptImages) {
@@ -583,19 +530,6 @@ export const deleteMultipleReceipts = async (req, res) => {
 
     const deleteResult = await Receipt.deleteMany({ _id: { $in: validIds } });
 
-    const updatedBillings = [];
-    for (const billingId of affectedBillingIds) {
-      try {
-        const updatedBilling = await Billing.recalculateBilling(billingId);
-        updatedBillings.push(updatedBilling);
-      } catch (billingError) {
-        console.error(
-          `Error recalculating billing ${billingId}:`,
-          billingError,
-        );
-      }
-    }
-
     await createNotification({
       actorUserId: req.user?._id || null,
       type: "billing",
@@ -615,8 +549,6 @@ export const deleteMultipleReceipts = async (req, res) => {
     return res.json({
       message: `${deleteResult.deletedCount} receipt(s) deleted successfully`,
       deletedCount: deleteResult.deletedCount,
-      billingsUpdated: updatedBillings.length,
-      updatedBillings,
     });
   } catch (error) {
     console.error("Bulk delete error:", error);
@@ -706,19 +638,6 @@ export const confirmMultipleReceipts = async (req, res) => {
       { $set: { status: "confirmed" } },
     );
 
-    const updatedBillings = [];
-    for (const billingId of Object.keys(billingMap)) {
-      try {
-        const updatedBilling = await Billing.recalculateBilling(billingId);
-        updatedBillings.push(updatedBilling);
-      } catch (billingError) {
-        console.error(
-          `Error recalculating billing ${billingId}:`,
-          billingError,
-        );
-      }
-    }
-
     const labels = receipts.map((r) => {
       const billingNumber =
         r.billingId?.billingNumber || r.billingId?._id?.toString?.() || "N/A";
@@ -752,8 +671,6 @@ export const confirmMultipleReceipts = async (req, res) => {
       message: `${updateResult.modifiedCount} receipt(s) confirmed successfully`,
       modifiedCount: updateResult.modifiedCount,
       receipts: updatedReceipts,
-      billingsUpdated: updatedBillings.length,
-      updatedBillings,
     });
   } catch (error) {
     console.error("Bulk confirm error:", error);
@@ -794,16 +711,6 @@ export const rejectMultipleReceipts = async (req, res) => {
       });
     }
 
-    const confirmedReceipts = receipts.filter((r) => r.status === "confirmed");
-    const billingUpdates = {};
-
-    for (const receipt of confirmedReceipts) {
-      const key =
-        receipt.billingId?._id?.toString?.() || receipt.billingId.toString();
-      if (!billingUpdates[key]) billingUpdates[key] = [];
-      billingUpdates[key].push(receipt._id);
-    }
-
     const updateResult = await Receipt.updateMany(
       { _id: { $in: receipts.map((r) => r._id) } },
       {
@@ -813,17 +720,6 @@ export const rejectMultipleReceipts = async (req, res) => {
         },
       },
     );
-
-    for (const billingId of Object.keys(billingUpdates)) {
-      try {
-        await Billing.recalculateBilling(billingId);
-      } catch (billingError) {
-        console.error(
-          `Error recalculating billing ${billingId}:`,
-          billingError,
-        );
-      }
-    }
 
     const labels = receipts.map((r) => {
       const billingNumber =
@@ -853,7 +749,6 @@ export const rejectMultipleReceipts = async (req, res) => {
     return res.json({
       message: `${updateResult.modifiedCount} receipt(s) rejected successfully`,
       modifiedCount: updateResult.modifiedCount,
-      billingsUpdated: Object.keys(billingUpdates).length,
     });
   } catch (error) {
     console.error("Bulk reject error:", error);
@@ -884,3 +779,4 @@ export const getBillingWithReceipts = async (req, res) => {
     return res.status(500).json({ message: error.message });
   }
 };
+  
