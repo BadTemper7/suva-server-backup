@@ -2,7 +2,7 @@ import Guest from "../models/Guest.js";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import jwt from "jsonwebtoken";
-import { sendWelcomeEmail } from "../config/email.js";
+import { sendWelcomeEmail, sendVerificationEmail } from "../config/email.js";
 
 /* -------------------- CREATE GUEST -------------------- */
 export const registerGuest = async (req, res) => {
@@ -19,10 +19,32 @@ export const registerGuest = async (req, res) => {
     const existingGuest = await Guest.findOne({
       email: email.trim().toLowerCase(),
     });
+
     if (existingGuest) {
+      // If email exists but not verified, allow re-registration
+      if (!existingGuest.isEmailVerified) {
+        // Generate new verification token
+        const verificationToken = crypto.randomBytes(32).toString("hex");
+        existingGuest.emailVerificationToken = verificationToken;
+        existingGuest.emailVerificationExpires =
+          Date.now() + 24 * 60 * 60 * 1000; // 24 hours
+        await existingGuest.save();
+
+        // Resend verification email
+        await sendVerificationEmail(existingGuest, verificationToken);
+
+        return res.status(200).json({
+          message:
+            "Email already registered but not verified. New verification email sent.",
+          requiresVerification: true,
+          email: existingGuest.email,
+        });
+      }
+
       return res.status(409).json({
-        message: "Email already registered",
+        message: "Email already registered and verified",
         exists: true,
+        verified: true,
       });
     }
 
@@ -33,6 +55,9 @@ export const registerGuest = async (req, res) => {
       });
     }
 
+    // Generate verification token
+    const verificationToken = crypto.randomBytes(32).toString("hex");
+
     const guest = await Guest.create({
       firstName: String(firstName).trim(),
       lastName: String(lastName).trim(),
@@ -42,32 +67,39 @@ export const registerGuest = async (req, res) => {
       hasAccount: true,
       accountType: "registered",
       status: "active",
+      isEmailVerified: false, // Not verified yet
+      emailVerificationToken: verificationToken,
+      emailVerificationExpires: Date.now() + 24 * 60 * 60 * 1000, // 24 hours
     });
 
     const guestResponse = guest.toObject();
     delete guestResponse.password;
+    delete guestResponse.emailVerificationToken;
+    delete guestResponse.emailVerificationExpires;
 
-    // 🚀 SEND WELCOME EMAIL
+    // 🚀 SEND VERIFICATION EMAIL
     try {
-      await sendWelcomeEmail(guestResponse);
-      console.log(`✅ Welcome email sent to ${guestResponse.email}`);
+      await sendVerificationEmail(guestResponse, verificationToken);
+      console.log(`✅ Verification email sent to ${guestResponse.email}`);
     } catch (emailError) {
-      console.error(`❌ Failed to send welcome email: ${emailError.message}`);
-      // Don't fail the registration if email fails, just log it
+      console.error(
+        `❌ Failed to send verification email: ${emailError.message}`,
+      );
+      // Don't fail registration if email fails, just log it
     }
 
     return res.status(201).json({
       success: true,
-      message: "Account created successfully. Welcome email sent!",
+      message:
+        "Account created successfully! Please check your email to verify your account.",
       guest: guestResponse,
+      requiresVerification: true,
       emailSent: true,
     });
   } catch (error) {
     return res.status(500).json({ message: error.message });
   }
 };
-
-/* -------------------- CREATE GUEST (Walk-in) -------------------- */
 export const createGuest = async (req, res) => {
   try {
     const {
@@ -146,7 +178,118 @@ export const createGuest = async (req, res) => {
     return res.status(500).json({ message: error.message });
   }
 };
-/* -------------------- LOGIN GUEST -------------------- */
+// Add to guestController.js
+export const verifyEmail = async (req, res) => {
+  try {
+    const { token } = req.params;
+
+    if (!token) {
+      return res.status(400).json({
+        success: false,
+        message: "Verification token is required",
+      });
+    }
+
+    // Find guest with valid token
+    const guest = await Guest.findOne({
+      emailVerificationToken: token,
+      emailVerificationExpires: { $gt: Date.now() },
+    });
+
+    if (!guest) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Invalid or expired verification token. Please request a new verification email.",
+      });
+    }
+
+    // Update guest as verified
+    guest.isEmailVerified = true;
+    guest.emailVerificationToken = null;
+    guest.emailVerificationExpires = null;
+    await guest.save();
+
+    // Send welcome email after verification
+    try {
+      await sendWelcomeEmail(guest);
+      console.log(`✅ Welcome email sent to ${guest.email}`);
+    } catch (emailError) {
+      console.error(`❌ Failed to send welcome email: ${emailError.message}`);
+    }
+
+    const guestResponse = guest.toObject();
+    delete guestResponse.password;
+    delete guestResponse.emailVerificationToken;
+    delete guestResponse.emailVerificationExpires;
+
+    return res.status(200).json({
+      success: true,
+      message: "Email verified successfully! Your account is now active.",
+      guest: guestResponse,
+    });
+  } catch (error) {
+    console.error("Error in verifyEmail:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Server error during email verification",
+      error: error.message,
+    });
+  }
+};
+
+// Resend verification email
+export const resendVerificationEmail = async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      return res.status(400).json({
+        success: false,
+        message: "Email is required",
+      });
+    }
+
+    const guest = await Guest.findOne({ email: email.trim().toLowerCase() });
+
+    if (!guest) {
+      return res.status(404).json({
+        success: false,
+        message: "Guest not found",
+      });
+    }
+
+    if (guest.isEmailVerified) {
+      return res.status(400).json({
+        success: false,
+        message: "Email is already verified",
+      });
+    }
+
+    // Generate new verification token
+    const verificationToken = crypto.randomBytes(32).toString("hex");
+    guest.emailVerificationToken = verificationToken;
+    guest.emailVerificationExpires = Date.now() + 24 * 60 * 60 * 1000; // 24 hours
+    await guest.save();
+
+    // Send verification email
+    await sendVerificationEmail(guest, verificationToken);
+
+    return res.status(200).json({
+      success: true,
+      message: "Verification email sent successfully. Please check your inbox.",
+    });
+  } catch (error) {
+    console.error("Error in resendVerificationEmail:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: error.message,
+    });
+  }
+};
+
+// Update login to check verification status
 export const loginGuest = async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -167,6 +310,17 @@ export const loginGuest = async (req, res) => {
       return res.status(401).json({
         success: false,
         message: "Invalid email or password",
+      });
+    }
+
+    // Check if email is verified
+    if (!guest.isEmailVerified) {
+      return res.status(401).json({
+        success: false,
+        message:
+          "Please verify your email address before logging in. Check your inbox for the verification link.",
+        requiresVerification: true,
+        email: guest.email,
       });
     }
 
@@ -192,6 +346,9 @@ export const loginGuest = async (req, res) => {
     // Don't return password
     const guestResponse = guest.toObject();
     delete guestResponse.password;
+    delete guestResponse.emailVerificationToken;
+    delete guestResponse.emailVerificationExpires;
+
     const token = jwt.sign(
       {
         id: guest._id,
@@ -199,10 +356,12 @@ export const loginGuest = async (req, res) => {
         firstName: guest.firstName,
         lastName: guest.lastName,
         role: "guest",
+        isVerified: guest.isEmailVerified,
       },
       process.env.JWT_SECRET,
       { expiresIn: "7d" },
     );
+
     return res.status(200).json({
       success: true,
       token,

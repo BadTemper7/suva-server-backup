@@ -67,7 +67,20 @@ const guestSchema = new Schema(
       type: Date,
       default: null,
     },
+    isEmailVerified: {
+      type: Boolean,
+      default: false,
+    },
 
+    emailVerificationToken: {
+      type: String,
+      default: null,
+    },
+
+    emailVerificationExpires: {
+      type: Date,
+      default: null,
+    },
     status: { type: String, enum: ["active", "inactive"], default: "active" },
   },
   { timestamps: true },
