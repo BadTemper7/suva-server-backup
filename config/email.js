@@ -1041,7 +1041,7 @@ export const sendWelcomeEmail = async (guest) => {
           </div>
           
           <div style="text-align: center;">
-            <a href="${process.env.FRONTEND_URL || "http://localhost:5173"}/bookings" class="button">
+            <a href="${process.env.FRONTEND_URL || "http://localhost:5173"}/booking-process" class="button">
               Make Your First Reservation →
             </a>
           </div>
