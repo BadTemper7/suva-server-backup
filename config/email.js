@@ -1386,3 +1386,282 @@ export const sendVerificationEmail = async (guest, verificationToken) => {
 
   return await sendEmail({ to: guest.email, subject, html });
 };
+// config/email.js - Add this function
+
+export const sendPasswordResetEmail = async (guest, resetToken) => {
+  const resetUrl = `${process.env.FRONTEND_URL}/reset-password?token=${resetToken}`;
+
+  const subject = "Reset Your Password - Suva's Place Resort";
+
+  const html = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>Reset Your Password</title>
+      <style>
+        * {
+          margin: 0;
+          padding: 0;
+          box-sizing: border-box;
+        }
+        
+        body {
+          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+          line-height: 1.6;
+          background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
+          padding: 20px;
+        }
+        
+        .container {
+          max-width: 600px;
+          margin: 0 auto;
+          background: #ffffff;
+          border-radius: 24px;
+          overflow: hidden;
+          box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+        }
+        
+        .header {
+          background: linear-gradient(135deg, #f59e0b, #d97706);
+          padding: 40px 30px;
+          text-align: center;
+          position: relative;
+          overflow: hidden;
+        }
+        
+        .header::before {
+          content: '';
+          position: absolute;
+          top: -50%;
+          right: -50%;
+          width: 200%;
+          height: 200%;
+          background: radial-gradient(circle, rgba(255,215,0,0.2) 0%, transparent 70%);
+          animation: shimmer 10s infinite;
+        }
+        
+        @keyframes shimmer {
+          0%, 100% { transform: translate(0, 0); }
+          50% { transform: translate(20%, 20%); }
+        }
+        
+        .logo-wrapper {
+          margin-bottom: 20px;
+          position: relative;
+          display: inline-block;
+        }
+        
+        .logo {
+          width: 80px;
+          height: 80px;
+          background: white;
+          border-radius: 50%;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.2);
+        }
+        
+        .logo img {
+          width: 60px;
+          height: 60px;
+          object-fit: contain;
+        }
+        
+        .brand-name {
+          font-family: 'Dancing Script', cursive;
+          font-size: 32px;
+          font-weight: bold;
+          color: white;
+          margin-bottom: 8px;
+          text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.2);
+        }
+        
+        .brand-subtitle {
+          font-family: 'Times New Roman', serif;
+          font-size: 14px;
+          color: rgba(255, 255, 255, 0.9);
+          letter-spacing: 1px;
+          font-style: italic;
+        }
+        
+        .content {
+          padding: 40px 30px;
+          background: white;
+        }
+        
+        .greeting {
+          font-size: 24px;
+          color: #78350f;
+          margin-bottom: 20px;
+          font-weight: 600;
+        }
+        
+        .greeting strong {
+          color: #b45309;
+        }
+        
+        .message-text {
+          color: #6b4c2c;
+          margin-bottom: 30px;
+          line-height: 1.8;
+          font-size: 16px;
+        }
+        
+        .reset-box {
+          background: linear-gradient(135deg, #fffbeb, #fef3c7);
+          border-radius: 16px;
+          padding: 30px;
+          text-align: center;
+          margin: 30px 0;
+          border: 2px solid #f59e0b;
+        }
+        
+        .reset-icon {
+          font-size: 48px;
+          margin-bottom: 20px;
+        }
+        
+        .button {
+          display: inline-block;
+          padding: 14px 32px;
+          background: linear-gradient(135deg, #f59e0b, #d97706);
+          color: white;
+          text-decoration: none;
+          border-radius: 50px;
+          font-weight: 600;
+          margin: 20px 0;
+          transition: all 0.3s ease;
+          box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+        }
+        
+        .button:hover {
+          transform: translateY(-2px);
+          box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.2);
+        }
+        
+        .warning-text {
+          font-size: 12px;
+          color: #92400e;
+          margin-top: 15px;
+        }
+        
+        .help-section {
+          margin-top: 30px;
+          padding: 20px;
+          background: linear-gradient(135deg, #fffbeb, #fef3c7);
+          border-radius: 16px;
+          border-left: 4px solid #f59e0b;
+        }
+        
+        .footer {
+          background: linear-gradient(135deg, #78350f, #92400e);
+          padding: 30px;
+          text-align: center;
+          color: white;
+        }
+        
+        .tagline {
+          font-family: 'Dancing Script', cursive;
+          font-size: 18px;
+          font-weight: 500;
+          color: #fde68a;
+          margin-bottom: 20px;
+        }
+        
+        .divider {
+          width: 60px;
+          height: 2px;
+          background: linear-gradient(90deg, transparent, #f59e0b, transparent);
+          margin: 20px auto;
+        }
+        
+        .contact-info {
+          font-size: 12px;
+          line-height: 1.8;
+          color: #fed7aa;
+          margin-top: 20px;
+        }
+        
+        .footer-text {
+          font-size: 11px;
+          color: #fed7aa;
+          margin-top: 20px;
+          opacity: 0.8;
+        }
+        
+        @import url('https://fonts.googleapis.com/css2?family=Dancing+Script:wght@400;500;600;700&display=swap');
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <div class="header">
+          <div class="logo-wrapper">
+            <div class="logo">
+              <img src="${process.env.LOGO_URL || "https://suvasplaceresort.com/images/small-logo.png"}" alt="Suva's Place Resort" />
+            </div>
+          </div>
+          <div class="brand-name">Suva's Place</div>
+          <div class="brand-subtitle">Resort Antipolo</div>
+        </div>
+        
+        <div class="content">
+          <div class="greeting">
+            Hello, <strong>${guest.firstName} ${guest.lastName}</strong>
+          </div>
+          
+          <div class="message-text">
+            We received a request to reset the password for your Suva's Place Resort account. 
+            Click the button below to create a new password. This link will expire in 1 hour.
+          </div>
+          
+          <div class="reset-box">
+            <div class="reset-icon">🔐</div>
+            <div style="font-size: 18px; font-weight: 600; color: #78350f; margin-bottom: 10px;">
+              Reset Your Password
+            </div>
+            <a href="${resetUrl}" class="button">
+              Reset Password →
+            </a>
+            <div class="warning-text">
+              This link will expire in 1 hour
+            </div>
+          </div>
+          
+          <div class="help-section">
+            <p>
+              <strong>💡 Didn't request this?</strong><br>
+              If you didn't request a password reset, you can safely ignore this email. Your password will not be changed.
+            </p>
+            <p style="margin-top: 10px;">
+              <strong>❓ Need help?</strong><br>
+              Contact us at +63 976023356 or reply to this email.
+            </p>
+          </div>
+        </div>
+        
+        <div class="footer">
+          <div class="tagline">Have Fun Under The Sun</div>
+          <div class="divider"></div>
+          
+          <div class="contact-info">
+            <strong>Suva's Place Resort</strong><br>
+            Antipolo City, Rizal, Philippines<br>
+            📞 +63 976023356<br>
+            📧 suvasplaceinc@gmail.com
+          </div>
+          
+          <div class="footer-text">
+            This is an automated password reset email from Suva's Place Resort.<br>
+            Please do not reply directly to this email.
+          </div>
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
+
+  return await sendEmail({ to: guest.email, subject, html });
+};

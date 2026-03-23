@@ -2,7 +2,11 @@ import Guest from "../models/Guest.js";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import jwt from "jsonwebtoken";
-import { sendWelcomeEmail, sendVerificationEmail } from "../config/email.js";
+import {
+  sendWelcomeEmail,
+  sendVerificationEmail,
+  sendPasswordResetEmail,
+} from "../config/email.js";
 
 /* -------------------- CREATE GUEST -------------------- */
 export const registerGuest = async (req, res) => {
@@ -473,24 +477,33 @@ export const upgradeToAccount = async (req, res) => {
   }
 };
 
-/* -------------------- RESET PASSWORD REQUEST -------------------- */
 export const requestPasswordReset = async (req, res) => {
   try {
     const { email } = req.body;
 
     if (!email) {
-      return res.status(400).json({ message: "Email is required" });
+      return res.status(400).json({
+        success: false,
+        message: "Email is required",
+      });
     }
 
     const guest = await Guest.findOne({ email: email.trim().toLowerCase() });
+
     if (!guest) {
-      return res.status(404).json({ message: "Guest not found" });
+      // For security, don't reveal that email doesn't exist
+      return res.status(200).json({
+        success: true,
+        message:
+          "If your email is registered, you will receive a password reset link.",
+      });
     }
 
     if (!guest.hasAccount) {
-      return res.status(400).json({
+      return res.status(200).json({
+        success: true,
         message:
-          "This email is not registered. Please create an account first.",
+          "If your email is registered, you will receive a password reset link.",
       });
     }
 
@@ -501,16 +514,30 @@ export const requestPasswordReset = async (req, res) => {
 
     await guest.save();
 
-    // Here you would send the reset token via email
-    // For development, return the token
-    return res.json({
+    // Send password reset email
+    try {
+      await sendPasswordResetEmail(guest, resetToken);
+      console.log(`✅ Password reset email sent to ${guest.email}`);
+    } catch (emailError) {
+      console.error(
+        `❌ Failed to send password reset email: ${emailError.message}`,
+      );
+      // Don't fail the request if email fails
+    }
+
+    return res.status(200).json({
       success: true,
-      message: "Password reset email sent",
+      message:
+        "If your email is registered, you will receive a password reset link.",
       resetToken:
         process.env.NODE_ENV === "development" ? resetToken : undefined,
     });
   } catch (error) {
-    return res.status(500).json({ message: error.message });
+    console.error("Error in requestPasswordReset:", error);
+    return res.status(500).json({
+      success: false,
+      message: error.message,
+    });
   }
 };
 
@@ -521,7 +548,23 @@ export const resetPassword = async (req, res) => {
 
     if (!token || !newPassword) {
       return res.status(400).json({
+        success: false,
         message: "Token and new password are required",
+      });
+    }
+
+    // Validate password strength
+    if (newPassword.length < 6) {
+      return res.status(400).json({
+        success: false,
+        message: "Password must be at least 6 characters long",
+      });
+    }
+
+    if (/\s/.test(newPassword)) {
+      return res.status(400).json({
+        success: false,
+        message: "Password cannot contain spaces",
       });
     }
 
@@ -532,7 +575,9 @@ export const resetPassword = async (req, res) => {
 
     if (!guest) {
       return res.status(400).json({
-        message: "Invalid or expired reset token",
+        success: false,
+        message:
+          "Invalid or expired reset token. Please request a new password reset.",
       });
     }
 
@@ -540,15 +585,29 @@ export const resetPassword = async (req, res) => {
     guest.password = newPassword;
     guest.resetPasswordToken = null;
     guest.resetPasswordExpires = null;
+    guest.hasAccount = true;
+    guest.accountType = "registered";
 
     await guest.save();
 
-    return res.json({
+    // Don't return password in response
+    const guestResponse = guest.toObject();
+    delete guestResponse.password;
+    delete guestResponse.resetPasswordToken;
+    delete guestResponse.resetPasswordExpires;
+
+    return res.status(200).json({
       success: true,
-      message: "Password reset successful",
+      message:
+        "Password reset successful. You can now log in with your new password.",
+      guest: guestResponse,
     });
   } catch (error) {
-    return res.status(500).json({ message: error.message });
+    console.error("Error in resetPassword:", error);
+    return res.status(500).json({
+      success: false,
+      message: error.message,
+    });
   }
 };
 /* -------------------- FIND OR CREATE GUEST BY EMAIL -------------------- */
