@@ -134,35 +134,29 @@ const applyDiscountsToBilling = async (billingId) => {
   const billing = await Billing.findById(billingId);
   if (!billing) return;
 
-  // ✅ Fetch reservation + payment option (where the percentage lives)
   const reservation = await Reservation.findById(
-    billing.reservationId
+    billing.reservationId,
   ).populate("paymentOption");
   if (!reservation) return;
 
-  // ---- IMPORTANT: change this to your real field name ----
-  // Example: paymentOption.depositPercent is 50 meaning 50%
-  const partialPercentRaw = reservation.paymentOption?.depositPercent ?? 100; // fallback to full payment
+  const partialPercentRaw = reservation.paymentOption?.depositPercent ?? 100;
   const partialRate =
     Math.max(0, Math.min(100, Number(partialPercentRaw))) / 100;
-  // --------------------------------------------------------
-
-  // Normalize paid amount
   const amountPaid = Number(billing.amountPaid || 0);
 
-  // 1) Fetch rooms + amenities
+  // Fetch rooms + addOns (not amenities)
   const reservationRooms = await ReservationRoom.find({
     reservationId: billing.reservationId,
   })
     .populate("roomId")
-    .populate("amenities.amenityId");
+    .populate("addOns.addOnId"); // Changed from amenities to addOns
 
-  // 2) Build room subtotals
+  // Build room subtotals with addOns
   const roomTotals = reservationRooms.map((r) => {
     let subtotal = Number(r.roomId?.rate || 0);
 
-    r.amenities.forEach((a) => {
-      subtotal += Number(a.amenityId?.rate || 0) * Number(a.quantity || 0);
+    r.addOns.forEach((a) => {
+      subtotal += Number(a.addOnId?.rate || 0) * Number(a.quantity || 0);
     });
 
     return {
@@ -173,7 +167,7 @@ const applyDiscountsToBilling = async (billingId) => {
 
   const subTotal = roomTotals.reduce((sum, r) => sum + r.subtotal, 0);
 
-  // 3) Fetch confirmed discount images
+  // Fetch confirmed discount images
   const confirmedDiscountImages = await DiscountImg.find({
     billingId,
     status: "confirmed",
@@ -182,64 +176,53 @@ const applyDiscountsToBilling = async (billingId) => {
   let totalDiscountAmount = 0;
   const discountedRooms = new Set();
 
-  // 4) Apply discounts
+  // Apply discounts
   for (const dImg of confirmedDiscountImages) {
     const discount = dImg.discountId;
     if (!discount || !discount.isActive) continue;
 
     let eligibleRooms = roomTotals.filter(
-      (r) => !discountedRooms.has(r.reservationRoomId)
+      (r) => !discountedRooms.has(r.reservationRoomId),
     );
     if (!eligibleRooms.length) continue;
 
-    // Applies to all rooms (only once)
     if (discount.appliesToAllRooms) {
       const discountValue = Math.floor(
-        (subTotal * discount.discountPercent) / 100
+        (subTotal * discount.discountPercent) / 100,
       );
       totalDiscountAmount += discountValue;
       break;
     }
 
-    // Sort by priority
     if (discount.discountPriority === "highest") {
       eligibleRooms.sort((a, b) => b.subtotal - a.subtotal);
     } else if (discount.discountPriority === "lowest") {
       eligibleRooms.sort((a, b) => a.subtotal - b.subtotal);
     }
 
-    // Limit eligible rooms
     if (discount.maxRoomCount) {
       eligibleRooms = eligibleRooms.slice(0, discount.maxRoomCount);
     }
 
-    // One room per discount image
     const targetRoom = eligibleRooms[0];
     if (targetRoom) {
       const roomDiscount = Math.floor(
-        (targetRoom.subtotal * discount.discountPercent) / 100
+        (targetRoom.subtotal * discount.discountPercent) / 100,
       );
       totalDiscountAmount += roomDiscount;
       discountedRooms.add(targetRoom.reservationRoomId);
     }
   }
 
-  // 5) Update billing totals
   const totalAmount = Math.max(0, Math.floor(subTotal - totalDiscountAmount));
-
-  // ✅ amountDue is partial % of totalAmount (deposit/downpayment)
   const amountDue = Math.max(0, Math.floor(totalAmount * partialRate));
-
-  // ✅ balance is what remains to be paid (based on amountDue, not totalAmount)
   const balance = Math.max(0, amountDue - amountPaid);
   const change = amountPaid > amountDue ? amountPaid - amountDue : 0;
 
   billing.subTotal = Math.floor(subTotal);
   billing.discountAmount = Math.floor(totalDiscountAmount);
   billing.totalAmount = totalAmount;
-
-  billing.amountDue = amountDue; // ✅ key line
-
+  billing.amountDue = amountDue;
   billing.amountPaid = amountPaid;
   billing.balance = balance;
   billing.change = change;

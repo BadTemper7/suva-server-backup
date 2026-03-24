@@ -10,6 +10,7 @@ import userRoutes from "./routes/userRoutes.js";
 import roomTypeRoutes from "./routes/roomTypeRoutes.js";
 import roomRoutes from "./routes/roomRoutes.js";
 import amenityRoutes from "./routes/amenityRoutes.js";
+import addOnRoutes from "./routes/addOnRoutes.js";
 import guestRoutes from "./routes/guestRoutes.js";
 import reservationRoutes from "./routes/reservationRoutes.js";
 import billingRoutes from "./routes/billingRoutes.js";
@@ -96,6 +97,7 @@ async function startServer() {
   app.use("/api/room-types", roomTypeRoutes);
   app.use("/api/rooms", roomRoutes);
   app.use("/api/users", userRoutes);
+  app.use("/api/add-ons", addOnRoutes);
   app.use("/api/amenities", amenityRoutes);
   app.use("/api/guests", guestRoutes);
   app.use("/api/reservations", reservationRoutes);

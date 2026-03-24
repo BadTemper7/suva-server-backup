@@ -1217,31 +1217,17 @@ export const generateReservationConfirmation = async (req, res) => {
       return res.status(400).json({ error: "Invalid reservation ID" });
     }
 
-    // Find reservation with all populated data (without reservationRooms that doesn't exist)
     const reservation = await Reservation.findById(id)
       .populate("guestId")
       .populate("paymentOption")
       .populate("discountId")
-      .populate("userId")
-      .populate({
-        path: "reservationRooms",
-        options: { strictPopulate: false }, // Add this option
-      })
-      .catch((err) => {
-        console.log("Error populating reservationRooms:", err.message);
-        // Continue without reservationRooms if population fails
-        return Reservation.findById(id)
-          .populate("guestId")
-          .populate("paymentOption")
-          .populate("discountId")
-          .populate("userId");
-      });
+      .populate("userId");
 
     if (!reservation) {
       return res.status(404).json({ error: "Reservation not found" });
     }
 
-    // Get reservation rooms separately if they exist
+    // Get reservation rooms with addOns
     let reservationRooms = [];
     try {
       reservationRooms = await ReservationRoom.find({ reservationId: id })
@@ -1252,17 +1238,16 @@ export const generateReservationConfirmation = async (req, res) => {
           },
         })
         .populate({
-          path: "amenities.amenityId",
+          path: "addOns.addOnId",
+          model: "AddOn",
         });
     } catch (roomErr) {
       console.log("Error fetching reservation rooms:", roomErr.message);
-      // Continue without rooms
     }
 
     // Create PDF document
     const doc = new PDFDocument({ margin: 50, size: "A4" });
 
-    // Set response headers
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader(
       "Content-Disposition",
@@ -1286,7 +1271,7 @@ export const generateReservationConfirmation = async (req, res) => {
       `Guest: ${reservation.guestId?.firstName || ""} ${reservation.guestId?.lastName || ""}`,
     );
     doc.text(`Email: ${reservation.guestId?.email || "N/A"}`);
-    doc.text(`Phone: ${reservation.guestId?.phone || "N/A"}`);
+    doc.text(`Phone: ${reservation.guestId?.contactNumber || "N/A"}`);
     doc.moveDown();
 
     doc.text(
@@ -1305,7 +1290,7 @@ export const generateReservationConfirmation = async (req, res) => {
     doc.text(`Payment Method: ${reservation.paymentOption?.name || "N/A"}`);
     doc.moveDown();
 
-    // Room details from reservationRooms
+    // Room details with addOns
     if (reservationRooms && reservationRooms.length > 0) {
       doc.fontSize(16).text("Room Details", { underline: true });
       doc.moveDown();
@@ -1317,16 +1302,16 @@ export const generateReservationConfirmation = async (req, res) => {
           room.roomId?.roomType?.name || room.roomId?.roomTypeName || "N/A";
         doc.text(`Room ${index + 1}: ${roomNumber} - ${roomTypeName}`);
 
-        if (room.roomId?.roomType?.basePrice) {
-          doc.text(`  Rate: $${room.roomId.roomType.basePrice} per night`);
+        if (room.roomId?.rate) {
+          doc.text(`  Rate: ${formatMoney(room.roomId.rate)} per night`);
         }
 
-        if (room.amenities && room.amenities.length > 0) {
-          doc.text("  Amenities:");
-          room.amenities.forEach((amenity) => {
-            if (amenity.amenityId) {
+        if (room.addOns && room.addOns.length > 0) {
+          doc.text("  Add-Ons:");
+          room.addOns.forEach((addOn) => {
+            if (addOn.addOnId) {
               doc.text(
-                `    • ${amenity.amenityId.name || "N/A"} (x${amenity.quantity || 1})`,
+                `    • ${addOn.addOnId.name || "N/A"} (x${addOn.quantity || 1}) - ${formatMoney((addOn.addOnId.rate || 0) * (addOn.quantity || 1))}`,
               );
             }
           });
@@ -1346,11 +1331,10 @@ export const generateReservationConfirmation = async (req, res) => {
     doc.moveDown(2);
     doc
       .fontSize(10)
-      .text("Thank you for choosing our hotel!", { align: "center" });
-    doc.text(
-      "For any inquiries, please contact: reservations@luxuryhotel.com",
-      { align: "center" },
-    );
+      .text("Thank you for choosing Suva's Place Resort!", { align: "center" });
+    doc.text("For inquiries, contact: reservations@suvasplace.com", {
+      align: "center",
+    });
     doc.text(`Confirmation generated on: ${new Date().toLocaleString()}`, {
       align: "center",
     });
@@ -1947,3 +1931,9 @@ export const getPastReservationsByGuest = async (req, res) => {
     return res.status(500).json({ error: error.message });
   }
 };
+function formatMoney(amount) {
+  return new Intl.NumberFormat("en-PH", {
+    style: "currency",
+    currency: "PHP",
+  }).format(Number(amount || 0));
+}

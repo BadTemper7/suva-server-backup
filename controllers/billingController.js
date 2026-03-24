@@ -24,27 +24,26 @@ const calcNights = (checkIn, checkOut) => {
 };
 // Helper function to calculate room + amenity subtotal
 async function calculateSubTotal(reservationId) {
-  // Populate rooms and amenities with rates
   const reservationRooms = await ReservationRoom.find({ reservationId })
     .populate("roomId")
     .populate({
-      path: "amenities.amenityId",
-      model: "Amenity",
+      path: "addOns.addOnId",
+      model: "AddOn",
     });
 
   let subTotal = 0;
 
   for (const resRoom of reservationRooms) {
-    // Room rate * 1 night (assuming 1 night per unit here)
+    // Room rate * nights
     const roomRate = resRoom.roomId?.rate || 0;
     subTotal += roomRate;
 
-    // Add amenities
-    if (resRoom.amenities && resRoom.amenities.length > 0) {
-      for (const amenity of resRoom.amenities) {
-        const amenityRate = amenity.amenityId?.rate || 0;
-        const quantity = amenity.quantity || 0;
-        subTotal += amenityRate * quantity;
+    // Add add-ons
+    if (resRoom.addOns && resRoom.addOns.length > 0) {
+      for (const addOn of resRoom.addOns) {
+        const addOnRate = addOn.addOnId?.rate || 0;
+        const quantity = addOn.quantity || 0;
+        subTotal += addOnRate * quantity;
       }
     }
   }
@@ -57,19 +56,15 @@ export const generateBilling = async (req, res) => {
   try {
     const { reservationId } = req.body;
 
-    // Fetch reservation with payment option
     const reservation =
       await Reservation.findById(reservationId).populate("paymentOption");
     if (!reservation) {
       return res.status(404).json({ error: "Reservation not found" });
     }
 
-    // Fetch all rooms and their amenities for this reservation
-    const reservationRooms = await ReservationRoom.find({
-      reservationId,
-    })
-      .populate("roomId") // get room details
-      .populate("amenities.amenityId"); // get amenity details
+    const reservationRooms = await ReservationRoom.find({ reservationId })
+      .populate("roomId")
+      .populate("addOns.addOnId");
 
     if (!reservationRooms || reservationRooms.length === 0) {
       return res
@@ -79,29 +74,26 @@ export const generateBilling = async (req, res) => {
 
     // Calculate subtotal
     let subTotal = 0;
-
     reservationRooms.forEach((resRoom) => {
       const roomRate = resRoom.roomId?.rate || 0;
       subTotal += roomRate;
 
-      if (resRoom.amenities && resRoom.amenities.length > 0) {
-        resRoom.amenities.forEach((a) => {
-          const amenityRate = a.amenityId?.rate || 0;
-          subTotal += amenityRate * a.quantity;
+      if (resRoom.addOns && resRoom.addOns.length > 0) {
+        resRoom.addOns.forEach((a) => {
+          const addOnRate = a.addOnId?.rate || 0;
+          subTotal += addOnRate * a.quantity;
         });
       }
     });
 
-    // Apply discount only if confirmed (discount logic can be extended later)
+    // Apply discount only if confirmed
     let discountAmount = 0;
     if (reservation.discountId) {
-      // TODO: Add logic to compute discountAmount based on discount model + confirmation
-      discountAmount = 0;
+      discountAmount = 0; // TODO: Add discount logic
     }
 
     const totalAmount = subTotal - discountAmount;
 
-    // Compute amountDueNow based on payment option
     let amountDueNow = totalAmount;
     if (reservation.paymentOption) {
       if (
@@ -111,9 +103,10 @@ export const generateBilling = async (req, res) => {
         amountDueNow = totalAmount * (reservation.paymentOption.amount / 100);
       }
     }
+
     const billingNumber = await Billing.generateBillingNumber();
-    // Create or update billing
     let billing = await Billing.findOne({ reservationId });
+
     if (!billing) {
       billing = new Billing({
         billingNumber,
@@ -143,7 +136,6 @@ export const generateBilling = async (req, res) => {
   }
 };
 
-// Optional: get billing by reservation
 export const getBillingByReservation = async (req, res) => {
   try {
     const { reservationId } = req.params;
@@ -163,7 +155,7 @@ export const getBillingByReservation = async (req, res) => {
   }
 };
 
-// Get billing by billing _id
+// Get billing by ID
 export const getBillingById = async (req, res) => {
   try {
     const { billingId } = req.params;
@@ -171,7 +163,7 @@ export const getBillingById = async (req, res) => {
     if (!mongoose.isValidObjectId(billingId))
       return res.status(400).json({ error: "Invalid billingId" });
 
-    const billing = await Billing.findById(billingId); // No populate yet
+    const billing = await Billing.findById(billingId);
     if (!billing) return res.status(404).json({ error: "Billing not found" });
 
     return res.status(200).json({
@@ -182,10 +174,12 @@ export const getBillingById = async (req, res) => {
     return res.status(500).json({ error: error.message });
   }
 };
+
+// Get all billings
 export const getBillings = async (req, res) => {
   try {
     const billings = await Billing.find()
-      .populate("receipts") // optional: remove if you don’t want receipts
+      .populate("receipts")
       .populate("reservationId")
       .populate({
         path: "reservationId",
@@ -213,6 +207,8 @@ export const getBillings = async (req, res) => {
     return res.status(500).json({ error: error.message });
   }
 };
+
+// Update billing calculation
 export const updateBillingCalc = async (req, res) => {
   try {
     const { billingId } = req.params;
@@ -243,8 +239,8 @@ export const updateBillingCalc = async (req, res) => {
         ReservationRoom.find({ reservationId: reservation._id })
           .populate("roomId")
           .populate({
-            path: "amenities",
-            populate: { path: "amenityId", model: "Amenity" },
+            path: "addOns",
+            populate: { path: "addOnId", model: "AddOn" },
           }),
         reservation.discountId
           ? Discount.findById(reservation.discountId)
@@ -258,36 +254,33 @@ export const updateBillingCalc = async (req, res) => {
       calcNights(reservation.checkIn, reservation.checkOut),
     );
 
-    // ✅ TOTAL AMOUNT PAID
+    // Total amount paid
     const amountPaid = receipts.reduce(
       (sum, r) => (r.status === "confirmed" ? sum + r.amountPaid : sum),
       0,
     );
 
-    // ✅ PER ROOM TOTALS + SUBTOTAL
+    // Per room totals + subtotal
     let subTotal = 0;
-
     const reservationRoomsTotal = reservationRooms.map((room) => {
       const r = room.toObject();
-
       const roomRateTotal = r.roomId.rate * nights;
-      const amenitiesTotal = r.amenities.reduce(
-        (sum, a) => sum + a.quantity * a.amenityId.rate,
+      const addOnsTotal = r.addOns.reduce(
+        (sum, a) => sum + a.quantity * a.addOnId.rate,
         0,
       );
-
-      const totalAmount = roomRateTotal + amenitiesTotal;
+      const totalAmount = roomRateTotal + addOnsTotal;
       subTotal += totalAmount;
 
       return {
         ...r,
         roomRateTotal,
-        amenitiesTotal,
+        addOnsTotal,
         totalAmount,
       };
     });
 
-    // ✅ DISCOUNT COMPUTATION
+    // Discount computation
     let discountAmount = 0;
     const percent = discount?.discountPercent || 0;
 
@@ -310,7 +303,6 @@ export const updateBillingCalc = async (req, res) => {
             confirmedImgs.length,
             discount.maxRoomCount || 1,
           );
-
           for (let i = 0; i < count; i++) {
             discountAmount += sortedRooms[i].totalAmount * (percent / 100);
           }
@@ -321,16 +313,15 @@ export const updateBillingCalc = async (req, res) => {
     }
 
     discountAmount = Math.min(discountAmount, subTotal);
-
     const totalAmount = subTotal - discountAmount;
 
-    // ✅ AMOUNT DUE NOW
+    // Amount due now
     const amountDueNow =
       paymentOption.paymentType === "full"
         ? totalAmount
         : totalAmount * (paymentOption.amount / 100);
 
-    // ✅ BILLING STATUS
+    // Billing status
     let status = "unpaid";
     let isRefundable = false;
 
@@ -346,9 +337,10 @@ export const updateBillingCalc = async (req, res) => {
     } else {
       status = "unpaid";
     }
+
     const refundAmount = amountPaid * 0.5;
 
-    // ✅ UPDATE BILLING (matches schema)
+    // Update billing
     billing.subTotal = subTotal;
     billing.discountAmount = discountAmount;
     billing.totalAmount = totalAmount;

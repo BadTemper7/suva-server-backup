@@ -1,3 +1,4 @@
+// models/Reservation.js
 import mongoose from "mongoose";
 import PDFDocument from "pdfkit";
 import ExcelJS from "exceljs";
@@ -16,12 +17,12 @@ const reservationRoomSchema = new Schema(
       ref: "Room",
       required: true,
     },
-    // Array of amenities for this room with quantity
-    amenities: [
+    // Array of add-ons for this room with quantity
+    addOns: [
       {
-        amenityId: {
+        addOnId: {
           type: Schema.Types.ObjectId,
-          ref: "Amenity",
+          ref: "AddOn",
           required: true,
         },
         quantity: {
@@ -77,7 +78,6 @@ const reservationSchema = new Schema(
     expiresAt: {
       type: Date,
       default: null,
-      // Remove index: true from here since we're defining it below
     },
 
     userId: { type: Schema.Types.ObjectId, ref: "User" },
@@ -111,7 +111,7 @@ reservationSchema.index(
   },
 );
 
-// Export models for Reservation, ReservationRoom, and ReservationAmenity
+// Export models for Reservation, ReservationRoom, and ReservationAddOn
 const Reservation = mongoose.model("Reservation", reservationSchema);
 const ReservationRoom = mongoose.model(
   "ReservationRoom",

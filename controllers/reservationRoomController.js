@@ -1,6 +1,7 @@
+// controllers/reservationRoomController.js
 import ReservationModels from "../models/Reservation.js";
 import Room from "../models/Room.js";
-import Amenity from "../models/Amenity.js";
+import AddOn from "../models/AddOn.js";
 import mongoose from "mongoose";
 import Billing from "../models/Billing.js";
 
@@ -18,25 +19,36 @@ async function validateRoomsExist(roomIds) {
   return { valid: true };
 }
 
-// Helper function to validate amenities stock
-async function validateAmenityStock(reservation, amenities) {
+// Helper function to validate add-ons stock
+async function validateAddOnStock(
+  reservation,
+  addOns,
+  excludeReservationRoomId = null,
+) {
   const { checkIn, checkOut } = reservation;
 
-  for (const item of amenities) {
-    const { amenityId, quantity } = item;
-    const amenity = await Amenity.findById(amenityId);
-    if (!amenity) throw new Error(`Amenity not found: ${amenityId}`);
-    if (amenity.status !== "active")
-      throw new Error(`Amenity is not active: ${amenity.name}`);
+  for (const item of addOns) {
+    const { addOnId, quantity } = item;
+    const addOn = await AddOn.findById(addOnId);
+    if (!addOn) throw new Error(`Add-on not found: ${addOnId}`);
+    if (addOn.status !== "active")
+      throw new Error(`Add-on is not active: ${addOn.name}`);
 
     // Calculate reserved stock during this reservation period
+    const matchStage = {
+      "addOns.addOnId": new mongoose.Types.ObjectId(addOnId),
+    };
+
+    // Exclude current reservation room if provided
+    if (excludeReservationRoomId) {
+      matchStage._id = {
+        $ne: new mongoose.Types.ObjectId(excludeReservationRoomId),
+      };
+    }
+
     const reservedCountAgg = await ReservationRoom.aggregate([
-      { $unwind: "$amenities" },
-      {
-        $match: {
-          "amenities.amenityId": new mongoose.Types.ObjectId(amenityId),
-        },
-      },
+      { $unwind: "$addOns" },
+      { $match: matchStage },
       {
         $lookup: {
           from: "reservations",
@@ -50,44 +62,53 @@ async function validateAmenityStock(reservation, amenities) {
         $match: {
           "reservation.checkIn": { $lt: new Date(checkOut) },
           "reservation.checkOut": { $gt: new Date(checkIn) },
+          "reservation.status": { $nin: ["cancelled", "expired"] }, // Exclude cancelled/expired reservations
         },
       },
-      { $group: { _id: null, totalReserved: { $sum: "$amenities.quantity" } } },
+      { $group: { _id: null, totalReserved: { $sum: "$addOns.quantity" } } },
     ]);
 
     const totalReserved = reservedCountAgg[0]?.totalReserved || 0;
-    if (totalReserved + quantity > amenity.stock) {
+    const availableStock = addOn.stock - totalReserved;
+
+    if (quantity > availableStock) {
       throw new Error(
-        `Amenity '${amenity.name}' does not have enough stock. Requested: ${quantity}, Available: ${
-          amenity.stock - totalReserved
-        }`,
+        `Add-on '${addOn.name}' does not have enough stock. Requested: ${quantity}, Available: ${availableStock}`,
       );
     }
   }
 }
+
+// Helper function to calculate discount
+async function calculateDiscount(reservation) {
+  // Implementation depends on your discount logic
+  return 0;
+}
+
+// Helper function to generate billing
 const generateBillingForUpdatedReservation = async (reservationId) => {
   try {
     // Fetch the reservation
     const reservation = await Reservation.findById(reservationId);
     if (!reservation) return;
 
-    // Fetch all the reservation rooms and their amenities
+    // Fetch all the reservation rooms and their add-ons
     const reservationRooms = await ReservationRoom.find({
       reservationId,
     })
       .populate("roomId")
-      .populate("amenities.amenityId");
+      .populate("addOns.addOnId");
 
-    // Calculate subtotal for all rooms and amenities
+    // Calculate subtotal for all rooms and add-ons
     let subTotal = 0;
     reservationRooms.forEach((resRoom) => {
       const roomRate = resRoom.roomId?.rate || 0;
       subTotal += roomRate;
 
-      if (resRoom.amenities && resRoom.amenities.length > 0) {
-        resRoom.amenities.forEach((a) => {
-          const amenityRate = a.amenityId?.rate || 0;
-          subTotal += amenityRate * a.quantity;
+      if (resRoom.addOns && resRoom.addOns.length > 0) {
+        resRoom.addOns.forEach((addOn) => {
+          const addOnRate = addOn.addOnId?.rate || 0;
+          subTotal += addOnRate * addOn.quantity;
         });
       }
     });
@@ -133,8 +154,8 @@ const generateBillingForUpdatedReservation = async (reservationId) => {
     throw new Error("Failed to update billing");
   }
 };
-// Add multiple rooms with amenities to a reservation
-// Add multiple rooms with amenities to a reservation
+
+// Add multiple rooms with add-ons to a reservation
 export const addReservationRooms = async (req, res) => {
   try {
     const { reservationId, rooms } = req.body;
@@ -144,7 +165,7 @@ export const addReservationRooms = async (req, res) => {
     if (!reservation)
       return res.status(404).json({ error: "Reservation not found" });
 
-    // Add rooms and amenities to the reservation
+    // Add rooms and add-ons to the reservation
     for (const room of rooms) {
       // Validate room existence
       const { valid, missingRooms } = await validateRoomsExist([room.roomId]);
@@ -154,9 +175,9 @@ export const addReservationRooms = async (req, res) => {
           .json({ error: `Room not found: ${missingRooms.join(", ")}` });
       }
 
-      // Validate amenities stock
-      if (room.amenities && room.amenities.length > 0) {
-        await validateAmenityStock(reservation, room.amenities);
+      // Validate add-ons stock
+      if (room.addOns && room.addOns.length > 0) {
+        await validateAddOnStock(reservation, room.addOns);
       }
 
       let reservationRoom = await ReservationRoom.findOne({
@@ -168,18 +189,21 @@ export const addReservationRooms = async (req, res) => {
         reservationRoom = new ReservationRoom({
           reservationId,
           roomId: room.roomId,
-          amenities: room.amenities || [],
+          addOns: room.addOns || [],
         });
       } else {
-        // Merge amenities if already exists
-        reservationRoom.amenities = [
-          ...reservationRoom.amenities,
-          ...(room.amenities || []),
+        // Merge add-ons if already exists
+        reservationRoom.addOns = [
+          ...reservationRoom.addOns,
+          ...(room.addOns || []),
         ];
       }
 
       await reservationRoom.save();
     }
+
+    // Update billing after adding rooms
+    await generateBillingForUpdatedReservation(reservationId);
 
     return res.status(201).json({
       message: "Rooms added to reservation successfully",
@@ -190,10 +214,12 @@ export const addReservationRooms = async (req, res) => {
   }
 };
 
+// Update reservation room add-ons
 export const updateReservationRoom = async (req, res) => {
   try {
     const { reservationRoomId } = req.params;
-    const { amenities } = req.body;
+    const { addOns } = req.body;
+
     // Validate reservation room exists
     const reservationRoom = await ReservationRoom.findById(reservationRoomId);
     if (!reservationRoom) {
@@ -210,18 +236,22 @@ export const updateReservationRoom = async (req, res) => {
         .json({ error: "Associated reservation not found" });
     }
 
-    // Validate amenities stock (excluding current reservation room from stock calculation)
-    if (amenities && amenities.length > 0) {
-      await validateAmenityStock(reservation, amenities, reservationRoom._id);
+    // Validate add-ons stock (excluding current reservation room from stock calculation)
+    if (addOns && addOns.length > 0) {
+      await validateAddOnStock(reservation, addOns, reservationRoom._id);
     }
 
-    // Update amenities
-    reservationRoom.amenities = amenities || [];
+    // Update add-ons
+    reservationRoom.addOns = addOns || [];
     await reservationRoom.save();
+
+    // Update billing after updating add-ons
+    await generateBillingForUpdatedReservation(reservationRoom.reservationId);
 
     return res.status(200).json({
       message: "Reservation room updated successfully",
       success: true,
+      reservationRoom,
     });
   } catch (error) {
     console.error(error);
@@ -229,7 +259,7 @@ export const updateReservationRoom = async (req, res) => {
   }
 };
 
-// Get reservation rooms with amenities
+// Get reservation rooms with add-ons
 export const getRoomsByReservationId = async (req, res) => {
   try {
     const { reservationId } = req.params;
@@ -244,8 +274,8 @@ export const getRoomsByReservationId = async (req, res) => {
         },
       })
       .populate({
-        path: "amenities.amenityId",
-        model: "Amenity",
+        path: "addOns.addOnId",
+        model: "AddOn",
       });
 
     if (!populatedRooms || populatedRooms.length === 0) {
@@ -274,33 +304,37 @@ export const removeReservationRooms = async (req, res) => {
       return res.status(404).json({ error: "Reservation not found" });
     }
 
-    // Find the existing reservationRoom
-    const reservationRoom = await ReservationRoom.findOne({ reservationId });
-    if (!reservationRoom) {
+    // Find the existing reservationRooms
+    const reservationRooms = await ReservationRoom.find({
+      reservationId,
+      roomId: { $in: roomIds },
+    });
+
+    if (!reservationRooms || reservationRooms.length === 0) {
       return res
         .status(404)
-        .json({ error: "Rooms not assigned to this reservation" });
+        .json({ error: "Rooms not found in this reservation" });
     }
 
-    // Ensure roomIds is an array (in case only a single roomId is provided)
-    const roomsToRemove = Array.isArray(roomIds) ? roomIds : [roomIds];
+    // Delete the reservation rooms
+    const deleteResult = await ReservationRoom.deleteMany({
+      reservationId,
+      roomId: { $in: roomIds },
+    });
 
-    // Remove the rooms from the reservation
-    reservationRoom.roomIds = reservationRoom.roomIds.filter(
-      (roomId) => !roomsToRemove.includes(roomId.toString()),
-    );
-
-    // Save the updated reservationRoom
-    await reservationRoom.save();
+    // Update billing after removing rooms
+    await generateBillingForUpdatedReservation(reservationId);
 
     return res.status(200).json({
       message: "Rooms removed from reservation successfully",
-      reservationRoom: reservationRoom,
+      deletedCount: deleteResult.deletedCount,
     });
   } catch (error) {
     return res.status(500).json({ error: error.message });
   }
 };
+
+// Delete multiple reservation rooms
 export const deleteMultipleReservationRooms = async (req, res) => {
   try {
     const { reservationRoomIds, reservationId } = req.body;
@@ -309,19 +343,181 @@ export const deleteMultipleReservationRooms = async (req, res) => {
       return res.status(400).json({ error: "Missing required fields" });
     }
 
+    const validIds = reservationRoomIds.filter((id) =>
+      mongoose.isValidObjectId(id),
+    );
+
     const deleteResult = await ReservationRoom.deleteMany({
-      _id: {
-        $in: reservationRoomIds.filter((id) => mongoose.isValidObjectId(id)),
-      },
+      _id: { $in: validIds },
       reservationId,
     });
+
+    // Update billing after deleting rooms
+    await generateBillingForUpdatedReservation(reservationId);
 
     return res.status(200).json({
       success: true,
       deletedCount: deleteResult.deletedCount,
+      message: `${deleteResult.deletedCount} room(s) removed from reservation`,
     });
   } catch (error) {
     console.error("Error:", error);
     return res.status(500).json({ error: "Failed to delete rooms" });
+  }
+};
+
+// Add add-ons to a specific room in a reservation
+export const addAddOnsToRoom = async (req, res) => {
+  try {
+    const { reservationRoomId } = req.params;
+    const { addOns } = req.body;
+
+    // Validate reservation room exists
+    const reservationRoom = await ReservationRoom.findById(reservationRoomId);
+    if (!reservationRoom) {
+      return res.status(404).json({ error: "Reservation room not found" });
+    }
+
+    // Get the associated reservation for validation
+    const reservation = await Reservation.findById(
+      reservationRoom.reservationId,
+    );
+    if (!reservation) {
+      return res
+        .status(404)
+        .json({ error: "Associated reservation not found" });
+    }
+
+    // Validate add-ons stock
+    if (addOns && addOns.length > 0) {
+      await validateAddOnStock(reservation, addOns, reservationRoom._id);
+    }
+
+    // Merge existing add-ons with new ones
+    const existingAddOns = reservationRoom.addOns || [];
+
+    for (const newAddOn of addOns) {
+      const existingIndex = existingAddOns.findIndex(
+        (ao) => ao.addOnId.toString() === newAddOn.addOnId,
+      );
+
+      if (existingIndex !== -1) {
+        // Update quantity if add-on already exists
+        existingAddOns[existingIndex].quantity += newAddOn.quantity;
+      } else {
+        // Add new add-on
+        existingAddOns.push(newAddOn);
+      }
+    }
+
+    reservationRoom.addOns = existingAddOns;
+    await reservationRoom.save();
+
+    // Update billing
+    await generateBillingForUpdatedReservation(reservationRoom.reservationId);
+
+    return res.status(200).json({
+      message: "Add-ons added successfully",
+      success: true,
+      reservationRoom,
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: error.message });
+  }
+};
+
+// Remove add-ons from a specific room
+export const removeAddOnsFromRoom = async (req, res) => {
+  try {
+    const { reservationRoomId } = req.params;
+    const { addOnIds } = req.body;
+
+    // Validate reservation room exists
+    const reservationRoom = await ReservationRoom.findById(reservationRoomId);
+    if (!reservationRoom) {
+      return res.status(404).json({ error: "Reservation room not found" });
+    }
+
+    // Remove specified add-ons
+    reservationRoom.addOns = reservationRoom.addOns.filter(
+      (addOn) => !addOnIds.includes(addOn.addOnId.toString()),
+    );
+
+    await reservationRoom.save();
+
+    // Update billing
+    await generateBillingForUpdatedReservation(reservationRoom.reservationId);
+
+    return res.status(200).json({
+      message: "Add-ons removed successfully",
+      success: true,
+      reservationRoom,
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: error.message });
+  }
+};
+
+// Update add-on quantity in a room
+export const updateAddOnQuantity = async (req, res) => {
+  try {
+    const { reservationRoomId, addOnId } = req.params;
+    const { quantity } = req.body;
+
+    if (!quantity || quantity < 1) {
+      return res.status(400).json({ error: "Valid quantity is required" });
+    }
+
+    // Validate reservation room exists
+    const reservationRoom = await ReservationRoom.findById(reservationRoomId);
+    if (!reservationRoom) {
+      return res.status(404).json({ error: "Reservation room not found" });
+    }
+
+    // Get the associated reservation for validation
+    const reservation = await Reservation.findById(
+      reservationRoom.reservationId,
+    );
+    if (!reservation) {
+      return res
+        .status(404)
+        .json({ error: "Associated reservation not found" });
+    }
+
+    // Find and update the add-on
+    const addOnIndex = reservationRoom.addOns.findIndex(
+      (ao) => ao.addOnId.toString() === addOnId,
+    );
+
+    if (addOnIndex === -1) {
+      return res.status(404).json({ error: "Add-on not found in this room" });
+    }
+
+    // Validate stock with new quantity
+    const updatedAddOns = [...reservationRoom.addOns];
+    updatedAddOns[addOnIndex].quantity = quantity;
+
+    await validateAddOnStock(
+      reservation,
+      [{ addOnId, quantity }],
+      reservationRoom._id,
+    );
+
+    reservationRoom.addOns = updatedAddOns;
+    await reservationRoom.save();
+
+    // Update billing
+    await generateBillingForUpdatedReservation(reservationRoom.reservationId);
+
+    return res.status(200).json({
+      message: "Add-on quantity updated successfully",
+      success: true,
+      reservationRoom,
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: error.message });
   }
 };

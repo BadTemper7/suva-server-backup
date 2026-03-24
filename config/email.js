@@ -1024,11 +1024,6 @@ export const sendWelcomeEmail = async (guest) => {
               <div class="feature-desc">Relax in our crystal-clear pool</div>
             </div>
             <div class="feature-card">
-              <div class="feature-icon">🍽️</div>
-              <div class="feature-title">Dining Options</div>
-              <div class="feature-desc">Delicious local and international cuisine</div>
-            </div>
-            <div class="feature-card">
               <div class="feature-icon">📶</div>
               <div class="feature-title">Free Wi-Fi</div>
               <div class="feature-desc">Stay connected throughout your stay</div>
