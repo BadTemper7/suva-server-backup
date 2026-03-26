@@ -46,15 +46,15 @@ dns.setServers(["1.1.1.1", "8.8.8.8"]);
 
 // ✅ Ensure Superadmin exists
 async function ensureSuperAdmin() {
-  const existing = await User.findOne({ username: "suva-admin" });
+  const existing = await User.findOne({ username: "suva_admin" });
   if (!existing) {
     await User.create({
       firstName: "Suva",
       lastName: "Admin",
-      username: "suva-admin",
-      email: "suva@example.com",
-      contactNumber: "09281901654",
-      password: "Suva_2026",
+      username: "suva_admin",
+      email: "suvasplaceinc@gmail.com",
+      contactNumber: "09760233563",
+      password: "!Suva123",
       role: "superadmin",
       status: "active",
       protected: true, // Cannot be deleted

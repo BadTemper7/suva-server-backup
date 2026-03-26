@@ -1,7 +1,6 @@
 // config/email.js
 import nodemailer from "nodemailer";
 import dotenv from "dotenv";
-import tls from "tls";
 
 dotenv.config();
 
@@ -45,24 +44,20 @@ const createTransporter = () => {
   const transporterConfig = {
     host: process.env.SMTP_HOST,
     port: port,
-    secure: secure, // true for 465, false for 587
+    secure: secure,
     auth: {
       user: process.env.SMTP_USER,
       pass: process.env.SMTP_PASSWORD,
     },
     tls: {
-      // For port 465 with SSL, we don't need to reject unauthorized
       rejectUnauthorized: false,
-      // Force TLS for port 465
       ciphers: "SSLv3",
     },
-    // Increase timeout for slower connections
     connectionTimeout: 10000,
     greetingTimeout: 10000,
     socketTimeout: 10000,
   };
 
-  // Additional configuration for port 587
   if (!secure && port === 587) {
     transporterConfig.tls = {
       rejectUnauthorized: false,
@@ -96,7 +91,6 @@ export const verifyEmailConnection = async () => {
     console.error(`   - Code: ${error.code || "N/A"}`);
     console.error(`   - Command: ${error.command || "N/A"}`);
 
-    // Provide helpful suggestions
     if (error.message.includes("ECONNREFUSED")) {
       console.error(
         "   💡 Suggestion: Check if the port is correct and not blocked by firewall",
@@ -135,7 +129,6 @@ export const sendEmail = async ({ to, subject, html, text }) => {
       subject: subject,
       html: html,
       text: text || html.replace(/<[^>]*>/g, ""),
-      // Add tracking headers
       headers: {
         "X-Mailer": "Suva's Place Resort",
         "X-Priority": "3",
@@ -176,569 +169,9 @@ export const sendEmail = async ({ to, subject, html, text }) => {
   }
 };
 
-// config/email.js - Updated Reservation Status Email Template with aligned logo design
+/* ==================== GUEST EMAIL TEMPLATES ==================== */
 
-export const sendReservationStatusEmail = async (
-  reservation,
-  guest,
-  oldStatus,
-  newStatus,
-) => {
-  const statusTemplates = {
-    pending: {
-      subject: `Reservation ${reservation.reservationNumber} - Pending Confirmation`,
-      title: "Reservation Received",
-      subtitle: "Your reservation is pending confirmation",
-      color: "#f59e0b",
-      bgGradient: "linear-gradient(135deg, #f59e0b, #d97706)",
-      icon: "⏳",
-      message: `We have received your reservation request for ${reservation.nights} night(s). Our team will review your booking and send confirmation shortly.`,
-      action: "Awaiting Confirmation",
-      buttonText: "View Reservation",
-    },
-    confirmed: {
-      subject: `Reservation ${reservation.reservationNumber} - Confirmed! 🎉`,
-      title: "Reservation Confirmed!",
-      subtitle: "Your stay at Suva's Place is confirmed",
-      color: "#10b981",
-      bgGradient: "linear-gradient(135deg, #10b981, #059669)",
-      icon: "✅",
-      message: `Great news! Your reservation for ${reservation.nights} night(s) has been confirmed. We're looking forward to welcoming you to Suva's Place Resort.`,
-      action: "Confirmed",
-      buttonText: "View Details",
-    },
-    cancelled: {
-      subject: `Reservation ${reservation.reservationNumber} - Cancelled`,
-      title: "Reservation Cancelled",
-      subtitle: "Your reservation has been cancelled",
-      color: "#ef4444",
-      bgGradient: "linear-gradient(135deg, #ef4444, #dc2626)",
-      icon: "❌",
-      message: `Your reservation for ${reservation.nights} night(s) has been cancelled. If you did not request this cancellation, please contact us immediately.`,
-      action: "Cancelled",
-      buttonText: "View Details",
-    },
-    checked_in: {
-      subject: `Reservation ${reservation.reservationNumber} - Checked In`,
-      title: "Welcome to Suva's Place!",
-      subtitle: "You have successfully checked in",
-      color: "#3b82f6",
-      bgGradient: "linear-gradient(135deg, #3b82f6, #2563eb)",
-      icon: "🏊",
-      message: `Welcome to Suva's Place Resort! You have successfully checked in for your ${reservation.nights} night(s) stay. We hope you enjoy your stay!`,
-      action: "Checked In",
-      buttonText: "View Stay Details",
-    },
-    checked_out: {
-      subject: `Reservation ${reservation.reservationNumber} - Checked Out`,
-      title: "Thank You for Staying!",
-      subtitle: "You have successfully checked out",
-      color: "#8b5cf6",
-      bgGradient: "linear-gradient(135deg, #8b5cf6, #7c3aed)",
-      icon: "🙏",
-      message: `Thank you for choosing Suva's Place Resort! We hope you had a wonderful stay. We look forward to welcoming you again soon.`,
-      action: "Checked Out",
-      buttonText: "Leave a Review",
-    },
-    expired: {
-      subject: `Reservation ${reservation.reservationNumber} - Expired`,
-      title: "Reservation Expired",
-      subtitle: "Your reservation has expired",
-      color: "#6b7280",
-      bgGradient: "linear-gradient(135deg, #6b7280, #4b5563)",
-      icon: "⏰",
-      message: `Your reservation for ${reservation.nights} night(s) has expired. If you still wish to book, please make a new reservation.`,
-      action: "Expired",
-      buttonText: "Book Again",
-    },
-    no_show: {
-      subject: `Reservation ${reservation.reservationNumber} - No Show`,
-      title: "Missed Reservation",
-      subtitle: "You did not check in for your reservation",
-      color: "#dc2626",
-      bgGradient: "linear-gradient(135deg, #dc2626, #b91c1c)",
-      icon: "🚫",
-      message: `We noticed you didn't check in for your reservation. If you have any questions or need assistance, please contact us.`,
-      action: "No Show",
-      buttonText: "Contact Us",
-    },
-  };
-
-  const template = statusTemplates[newStatus] || statusTemplates.pending;
-
-  // Calculate dates
-  const checkInDate = new Date(reservation.checkIn).toLocaleDateString(
-    "en-PH",
-    {
-      weekday: "long",
-      year: "numeric",
-      month: "long",
-      day: "numeric",
-    },
-  );
-
-  const checkOutDate = new Date(reservation.checkOut).toLocaleDateString(
-    "en-PH",
-    {
-      weekday: "long",
-      year: "numeric",
-      month: "long",
-      day: "numeric",
-    },
-  );
-
-  // Get logo URL (you can use base64 or hosted URL)
-  const logoUrl =
-    process.env.LOGO_URL ||
-    "https://suvasplaceresort.com/images/small-logo.png";
-
-  const html = `
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <meta charset="UTF-8">
-      <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>${template.subject}</title>
-      <style>
-        * {
-          margin: 0;
-          padding: 0;
-          box-sizing: border-box;
-        }
-        
-        body {
-          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-          line-height: 1.6;
-          background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
-          padding: 20px;
-        }
-        
-        .container {
-          max-width: 600px;
-          margin: 0 auto;
-          background: #ffffff;
-          border-radius: 24px;
-          overflow: hidden;
-          box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
-        }
-        
-        /* Header with brand colors */
-        .header {
-          background: ${template.bgGradient};
-          padding: 40px 30px;
-          text-align: center;
-          position: relative;
-          overflow: hidden;
-        }
-        
-        /* Decorative sun rays effect - matching React component */
-        .header::before {
-          content: '';
-          position: absolute;
-          top: -50%;
-          right: -50%;
-          width: 200%;
-          height: 200%;
-          background: radial-gradient(circle, rgba(255,215,0,0.2) 0%, transparent 70%);
-          animation: shimmer 10s infinite;
-        }
-        
-        @keyframes shimmer {
-          0%, 100% { transform: translate(0, 0); }
-          50% { transform: translate(20%, 20%); }
-        }
-        
-        /* Logo container - matching React Logo component styling */
-        .logo-wrapper {
-          margin-bottom: 20px;
-          position: relative;
-          display: inline-block;
-        }
-        
-        /* Logo styling - exactly matching React component */
-        .logo {
-          width: 80px;
-          height: 80px;
-          background: white;
-          border-radius: 50%;
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-          box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.2);
-          position: relative;
-          transition: transform 0.3s ease;
-          cursor: pointer;
-        }
-        
-        .logo img {
-          width: 60px;
-          height: 60px;
-          object-fit: contain;
-          transition: transform 0.3s ease;
-        }
-        
-        /* Sun burst effect on hover - matching React component */
-        .logo:hover {
-          transform: scale(1.05);
-        }
-        
-        .logo:hover::before {
-          content: '';
-          position: absolute;
-          inset: -8px;
-          background: radial-gradient(circle, rgba(255,215,0,0.3), transparent);
-          border-radius: 50%;
-          opacity: 1;
-          animation: pulse 1.5s ease-in-out infinite;
-        }
-        
-        @keyframes pulse {
-          0%, 100% {
-            opacity: 0.3;
-            transform: scale(1);
-          }
-          50% {
-            opacity: 0.6;
-            transform: scale(1.1);
-          }
-        }
-        
-        /* Brand name - matching React component typography */
-        .brand-name {
-          font-family: 'Dancing Script', cursive;
-          font-size: 32px;
-          font-weight: bold;
-          color: white;
-          margin-bottom: 8px;
-          text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.2);
-          letter-spacing: 1px;
-        }
-        
-        .brand-subtitle {
-          font-family: 'Times New Roman', serif;
-          font-size: 14px;
-          color: rgba(255, 255, 255, 0.9);
-          letter-spacing: 1px;
-          font-style: italic;
-        }
-        
-        /* Status badge - matching React component styling */
-        .status-badge {
-          display: inline-block;
-          padding: 8px 24px;
-          background: rgba(255, 255, 255, 0.2);
-          backdrop-filter: blur(10px);
-          color: white;
-          border-radius: 50px;
-          font-size: 14px;
-          font-weight: 600;
-          margin-top: 20px;
-          border: 1px solid rgba(255, 255, 255, 0.3);
-          transition: all 0.3s ease;
-        }
-        
-        .status-badge:hover {
-          transform: translateY(-2px);
-          background: rgba(255, 255, 255, 0.3);
-        }
-        
-        .content {
-          padding: 40px 30px;
-          background: white;
-        }
-        
-        .greeting {
-          font-size: 18px;
-          color: #78350f;
-          margin-bottom: 20px;
-          font-weight: 500;
-        }
-        
-        .greeting strong {
-          color: #b45309;
-          font-weight: 700;
-        }
-        
-        .message-text {
-          color: #6b4c2c;
-          margin-bottom: 30px;
-          line-height: 1.8;
-        }
-        
-        /* Reservation card - matching brand aesthetics */
-        .reservation-details {
-          background: linear-gradient(135deg, #fffbeb, #fef3c7);
-          border-radius: 20px;
-          padding: 25px;
-          margin: 30px 0;
-          border-left: 4px solid ${template.color};
-          box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
-          transition: transform 0.3s ease, box-shadow 0.3s ease;
-        }
-        
-        .reservation-details:hover {
-          transform: translateY(-2px);
-          box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
-        }
-        
-        .reservation-details h3 {
-          color: #78350f;
-          font-size: 18px;
-          margin-bottom: 20px;
-          display: flex;
-          align-items: center;
-          gap: 10px;
-          font-weight: 700;
-        }
-        
-        .detail-row {
-          display: flex;
-          justify-content: space-between;
-          padding: 12px 0;
-          border-bottom: 1px solid rgba(180, 83, 9, 0.1);
-        }
-        
-        .detail-row:last-child {
-          border-bottom: none;
-        }
-        
-        .detail-label {
-          font-weight: 600;
-          color: #b45309;
-        }
-        
-        .detail-value {
-          color: #78350f;
-          font-weight: 500;
-        }
-        
-        /* Button - matching "Have Fun Under The Sun" theme */
-        .button {
-          display: inline-block;
-          padding: 14px 32px;
-          background: ${template.bgGradient};
-          color: white;
-          text-decoration: none;
-          border-radius: 50px;
-          font-weight: 600;
-          margin: 20px 0;
-          transition: all 0.3s ease;
-          box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
-          border: none;
-          cursor: pointer;
-        }
-        
-        .button:hover {
-          transform: translateY(-2px);
-          box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.2);
-        }
-        
-        /* Help section - matching brand colors */
-        .help-section {
-          margin-top: 30px;
-          padding: 20px;
-          background: linear-gradient(135deg, #fffbeb, #fef3c7);
-          border-radius: 16px;
-          border-left: 4px solid #f59e0b;
-          transition: transform 0.3s ease;
-        }
-        
-        .help-section:hover {
-          transform: translateX(4px);
-        }
-        
-        .help-section p {
-          color: #92400e;
-          font-size: 14px;
-          margin: 0;
-        }
-        
-        .help-section strong {
-          color: #b45309;
-        }
-        
-        /* Footer - matching React component styling */
-        .footer {
-          background: linear-gradient(135deg, #78350f, #92400e);
-          padding: 30px;
-          text-align: center;
-          color: white;
-        }
-        
-        .tagline {
-          font-family: 'Dancing Script', cursive;
-          font-size: 18px;
-          font-weight: 500;
-          color: #fde68a;
-          margin-bottom: 20px;
-          letter-spacing: 0.5px;
-        }
-        
-        .established {
-          font-family: 'Times New Roman', serif;
-          font-size: 12px;
-          letter-spacing: 2px;
-          color: #fcd34d;
-          margin: 10px 0;
-          text-transform: uppercase;
-        }
-        
-        .divider {
-          width: 60px;
-          height: 2px;
-          background: linear-gradient(90deg, transparent, #f59e0b, transparent);
-          margin: 20px auto;
-        }
-        
-        .contact-info {
-          font-size: 12px;
-          line-height: 1.8;
-          color: #fed7aa;
-          margin-top: 20px;
-        }
-        
-        .contact-info strong {
-          color: #fffbeb;
-          font-weight: 700;
-        }
-        
-        .footer-text {
-          font-size: 11px;
-          color: #fed7aa;
-          margin-top: 20px;
-          opacity: 0.8;
-        }
-        
-        @media (max-width: 600px) {
-          .content {
-            padding: 30px 20px;
-          }
-          
-          .detail-row {
-            flex-direction: column;
-            gap: 5px;
-          }
-          
-          .brand-name {
-            font-size: 24px;
-          }
-          
-          .logo {
-            width: 60px;
-            height: 60px;
-          }
-          
-          .logo img {
-            width: 45px;
-            height: 45px;
-          }
-          
-          .tagline {
-            font-size: 16px;
-          }
-        }
-        
-        /* Import Dancing Script font - matching React component */
-        @import url('https://fonts.googleapis.com/css2?family=Dancing+Script:wght@400;500;600;700&display=swap');
-      </style>
-    </head>
-    <body>
-      <div class="container">
-        <!-- Header with brand styling - matching React Logo component -->
-        <div class="header">
-          <div class="logo-wrapper">
-            <div class="logo">
-              <img src="${logoUrl}" alt="Suva's Place Resort" />
-            </div>
-          </div>
-          
-          <div class="brand-name">Suva's Place</div>
-          <div class="brand-subtitle">Resort Antipolo</div>
-          
-          <div class="status-badge">
-            ${template.icon} ${template.action}
-          </div>
-        </div>
-        
-        <!-- Main Content -->
-        <div class="content">
-          <div class="greeting">
-            Dear <strong>${guest.firstName} ${guest.lastName}</strong>,
-          </div>
-          
-          <div class="message-text">
-            ${template.message}
-          </div>
-          
-          <!-- Reservation Details Card -->
-          <div class="reservation-details">
-            <h3>
-              <span>📋</span> Reservation Details
-            </h3>
-            <div class="detail-row">
-              <span class="detail-label">Reservation Number:</span>
-              <span class="detail-value">${reservation.reservationNumber}</span>
-            </div>
-            <div class="detail-row">
-              <span class="detail-label">Check-in Date:</span>
-              <span class="detail-value">${checkInDate}</span>
-            </div>
-            <div class="detail-row">
-              <span class="detail-label">Check-out Date:</span>
-              <span class="detail-value">${checkOutDate}</span>
-            </div>
-            <div class="detail-row">
-              <span class="detail-label">Number of Nights:</span>
-              <span class="detail-value">${reservation.nights} night(s)</span>
-            </div>
-            <div class="detail-row">
-              <span class="detail-label">Guests:</span>
-              <span class="detail-value">${reservation.adults} Adults, ${reservation.children} Children</span>
-            </div>
-          </div>
-          
-          <!-- Call to Action Button -->
-          <div style="text-align: center;">
-            <a href="${process.env.FRONTEND_URL}/bookings" class="button">
-              ${template.buttonText} →
-            </a>
-          </div>
-          
-          <!-- Help Section -->
-          <div class="help-section">
-            <p>
-              <strong>💡 Have Fun Under The Sun!</strong><br>
-              Need assistance with your reservation? Contact us at +63 976023356 or reply to this email.
-            </p>
-          </div>
-        </div>
-        
-        <!-- Footer with brand elements - matching React component -->
-        <div class="footer">
-          <div class="tagline">Have Fun Under The Sun</div>
-          <div class="established">Est. 1971</div>
-          <div class="divider"></div>
-          
-          <div class="contact-info">
-            <strong>Suva's Place Resort</strong><br>
-            Antipolo City, Rizal, Philippines<br>
-            📞 +63 976023356<br>
-            📧 suvasplaceinc@gmail.com<br>
-            🌐 www.suvasplace.com
-          </div>
-          
-          <div class="footer-text">
-            This is an automated message from Suva's Place Resort.<br>
-            Please do not reply directly to this email.
-          </div>
-        </div>
-      </div>
-    </body>
-    </html>
-  `;
-
-  return await sendEmail({ to: guest.email, subject: template.subject, html });
-};
+// Guest Welcome Email
 export const sendWelcomeEmail = async (guest) => {
   const subject = "Welcome to Suva's Place Resort! 🏖️";
 
@@ -750,19 +183,13 @@ export const sendWelcomeEmail = async (guest) => {
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
       <title>Welcome to Suva's Place Resort</title>
       <style>
-        * {
-          margin: 0;
-          padding: 0;
-          box-sizing: border-box;
-        }
-        
+        * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
           font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
           line-height: 1.6;
           background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
           padding: 20px;
         }
-        
         .container {
           max-width: 600px;
           margin: 0 auto;
@@ -771,8 +198,6 @@ export const sendWelcomeEmail = async (guest) => {
           overflow: hidden;
           box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
         }
-        
-        /* Header with brand colors */
         .header {
           background: linear-gradient(135deg, #f59e0b, #d97706);
           padding: 40px 30px;
@@ -780,8 +205,6 @@ export const sendWelcomeEmail = async (guest) => {
           position: relative;
           overflow: hidden;
         }
-        
-        /* Decorative sun rays effect */
         .header::before {
           content: '';
           position: absolute;
@@ -792,19 +215,15 @@ export const sendWelcomeEmail = async (guest) => {
           background: radial-gradient(circle, rgba(255,215,0,0.2) 0%, transparent 70%);
           animation: shimmer 10s infinite;
         }
-        
         @keyframes shimmer {
           0%, 100% { transform: translate(0, 0); }
           50% { transform: translate(20%, 20%); }
         }
-        
-        /* Logo styling */
         .logo-wrapper {
           margin-bottom: 20px;
           position: relative;
           display: inline-block;
         }
-        
         .logo {
           width: 80px;
           height: 80px;
@@ -814,16 +233,12 @@ export const sendWelcomeEmail = async (guest) => {
           align-items: center;
           justify-content: center;
           box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.2);
-          position: relative;
-          transition: transform 0.3s ease;
         }
-        
         .logo img {
           width: 60px;
           height: 60px;
           object-fit: contain;
         }
-        
         .brand-name {
           font-family: 'Dancing Script', cursive;
           font-size: 32px;
@@ -831,9 +246,7 @@ export const sendWelcomeEmail = async (guest) => {
           color: white;
           margin-bottom: 8px;
           text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.2);
-          letter-spacing: 1px;
         }
-        
         .brand-subtitle {
           font-family: 'Times New Roman', serif;
           font-size: 14px;
@@ -841,66 +254,47 @@ export const sendWelcomeEmail = async (guest) => {
           letter-spacing: 1px;
           font-style: italic;
         }
-        
         .content {
           padding: 40px 30px;
           background: white;
         }
-        
         .greeting {
           font-size: 24px;
           color: #78350f;
           margin-bottom: 20px;
           font-weight: 600;
         }
-        
         .greeting strong {
           color: #b45309;
         }
-        
         .welcome-text {
           color: #6b4c2c;
           margin-bottom: 30px;
           line-height: 1.8;
           font-size: 16px;
         }
-        
         .feature-grid {
           display: grid;
           grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
           gap: 20px;
           margin: 30px 0;
         }
-        
         .feature-card {
           background: linear-gradient(135deg, #fffbeb, #fef3c7);
           border-radius: 16px;
           padding: 20px;
           text-align: center;
           transition: transform 0.3s ease;
-          border: 1px solid rgba(245, 158, 11, 0.2);
         }
-        
-        .feature-card:hover {
-          transform: translateY(-4px);
-        }
-        
         .feature-icon {
           font-size: 32px;
           margin-bottom: 12px;
         }
-        
         .feature-title {
           font-weight: 600;
           color: #b45309;
           margin-bottom: 8px;
         }
-        
-        .feature-desc {
-          font-size: 12px;
-          color: #92400e;
-        }
-        
         .button {
           display: inline-block;
           padding: 14px 32px;
@@ -913,86 +307,29 @@ export const sendWelcomeEmail = async (guest) => {
           transition: all 0.3s ease;
           box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
         }
-        
         .button:hover {
           transform: translateY(-2px);
           box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.2);
         }
-        
-        .help-section {
-          margin-top: 30px;
-          padding: 20px;
-          background: linear-gradient(135deg, #fffbeb, #fef3c7);
-          border-radius: 16px;
-          border-left: 4px solid #f59e0b;
-        }
-        
-        .help-section p {
-          color: #92400e;
-          font-size: 14px;
-          margin: 0;
-        }
-        
         .footer {
           background: linear-gradient(135deg, #78350f, #92400e);
           padding: 30px;
           text-align: center;
           color: white;
         }
-        
         .tagline {
           font-family: 'Dancing Script', cursive;
           font-size: 18px;
           font-weight: 500;
           color: #fde68a;
           margin-bottom: 20px;
-          letter-spacing: 0.5px;
         }
-        
-        .established {
-          font-family: 'Times New Roman', serif;
-          font-size: 12px;
-          letter-spacing: 2px;
-          color: #fcd34d;
-          margin: 10px 0;
-          text-transform: uppercase;
-        }
-        
-        .divider {
-          width: 60px;
-          height: 2px;
-          background: linear-gradient(90deg, transparent, #f59e0b, transparent);
-          margin: 20px auto;
-        }
-        
         .contact-info {
           font-size: 12px;
           line-height: 1.8;
           color: #fed7aa;
           margin-top: 20px;
         }
-        
-        .footer-text {
-          font-size: 11px;
-          color: #fed7aa;
-          margin-top: 20px;
-          opacity: 0.8;
-        }
-        
-        @media (max-width: 600px) {
-          .content {
-            padding: 30px 20px;
-          }
-          
-          .brand-name {
-            font-size: 24px;
-          }
-          
-          .feature-grid {
-            grid-template-columns: 1fr;
-          }
-        }
-        
         @import url('https://fonts.googleapis.com/css2?family=Dancing+Script:wght@400;500;600;700&display=swap');
       </style>
     </head>
@@ -1036,38 +373,19 @@ export const sendWelcomeEmail = async (guest) => {
           </div>
           
           <div style="text-align: center;">
-            <a href="${process.env.FRONTEND_URL || "http://localhost:5173"}/booking-process" class="button">
+            <a href="${process.env.FRONTEND_URL}/booking-process" class="button">
               Make Your First Reservation →
             </a>
-          </div>
-          
-          <div class="help-section">
-            <p>
-              <strong>💡 Quick Tips:</strong><br>
-              • Log in to view your booking history<br>
-              • Save your favorite rooms for future stays<br>
-              • Contact us for special requests<br>
-              • Check out our seasonal promotions
-            </p>
           </div>
         </div>
         
         <div class="footer">
           <div class="tagline">Have Fun Under The Sun</div>
-          <div class="established">Est. 1971</div>
-          <div class="divider"></div>
-          
           <div class="contact-info">
             <strong>Suva's Place Resort</strong><br>
             Antipolo City, Rizal, Philippines<br>
             📞 +63 976023356<br>
-            📧 suvasplaceinc@gmail.com<br>
-            🌐 www.${process.env.FRONTEND_URL}
-          </div>
-          
-          <div class="footer-text">
-            This is an automated welcome email from Suva's Place Resort.<br>
-            If you didn't create this account, please contact us immediately.
+            📧 suvasplaceinc@gmail.com
           </div>
         </div>
       </div>
@@ -1077,7 +395,8 @@ export const sendWelcomeEmail = async (guest) => {
 
   return await sendEmail({ to: guest.email, subject, html });
 };
-// config/email.js - Add this function
+
+// Guest Verification Email
 export const sendVerificationEmail = async (guest, verificationToken) => {
   const verificationUrl = `${process.env.FRONTEND_URL}/verify-email?token=${verificationToken}`;
 
@@ -1091,19 +410,14 @@ export const sendVerificationEmail = async (guest, verificationToken) => {
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
       <title>Verify Your Email</title>
       <style>
-        * {
-          margin: 0;
-          padding: 0;
-          box-sizing: border-box;
-        }
-        
+        /* Same styles as welcome email */
+        * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
           font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
           line-height: 1.6;
           background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
           padding: 20px;
         }
-        
         .container {
           max-width: 600px;
           margin: 0 auto;
@@ -1112,37 +426,11 @@ export const sendVerificationEmail = async (guest, verificationToken) => {
           overflow: hidden;
           box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
         }
-        
         .header {
           background: linear-gradient(135deg, #f59e0b, #d97706);
           padding: 40px 30px;
           text-align: center;
-          position: relative;
-          overflow: hidden;
         }
-        
-        .header::before {
-          content: '';
-          position: absolute;
-          top: -50%;
-          right: -50%;
-          width: 200%;
-          height: 200%;
-          background: radial-gradient(circle, rgba(255,215,0,0.2) 0%, transparent 70%);
-          animation: shimmer 10s infinite;
-        }
-        
-        @keyframes shimmer {
-          0%, 100% { transform: translate(0, 0); }
-          50% { transform: translate(20%, 20%); }
-        }
-        
-        .logo-wrapper {
-          margin-bottom: 20px;
-          position: relative;
-          display: inline-block;
-        }
-        
         .logo {
           width: 80px;
           height: 80px;
@@ -1151,58 +439,28 @@ export const sendVerificationEmail = async (guest, verificationToken) => {
           display: inline-flex;
           align-items: center;
           justify-content: center;
-          box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.2);
-          position: relative;
-          transition: transform 0.3s ease;
+          margin-bottom: 20px;
         }
-        
         .logo img {
           width: 60px;
           height: 60px;
           object-fit: contain;
         }
-        
         .brand-name {
           font-family: 'Dancing Script', cursive;
           font-size: 32px;
           font-weight: bold;
           color: white;
-          margin-bottom: 8px;
-          text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.2);
-          letter-spacing: 1px;
         }
-        
-        .brand-subtitle {
-          font-family: 'Times New Roman', serif;
-          font-size: 14px;
-          color: rgba(255, 255, 255, 0.9);
-          letter-spacing: 1px;
-          font-style: italic;
-        }
-        
         .content {
           padding: 40px 30px;
           background: white;
         }
-        
         .greeting {
           font-size: 24px;
           color: #78350f;
           margin-bottom: 20px;
-          font-weight: 600;
         }
-        
-        .greeting strong {
-          color: #b45309;
-        }
-        
-        .message-text {
-          color: #6b4c2c;
-          margin-bottom: 30px;
-          line-height: 1.8;
-          font-size: 16px;
-        }
-        
         .verification-box {
           background: linear-gradient(135deg, #fffbeb, #fef3c7);
           border-radius: 16px;
@@ -1211,12 +469,6 @@ export const sendVerificationEmail = async (guest, verificationToken) => {
           margin: 30px 0;
           border: 2px solid #f59e0b;
         }
-        
-        .verification-icon {
-          font-size: 48px;
-          margin-bottom: 20px;
-        }
-        
         .button {
           display: inline-block;
           padding: 14px 32px;
@@ -1226,98 +478,23 @@ export const sendVerificationEmail = async (guest, verificationToken) => {
           border-radius: 50px;
           font-weight: 600;
           margin: 20px 0;
-          transition: all 0.3s ease;
-          box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
         }
-        
-        .button:hover {
-          transform: translateY(-2px);
-          box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.2);
-        }
-        
-        .help-section {
-          margin-top: 30px;
-          padding: 20px;
-          background: linear-gradient(135deg, #fffbeb, #fef3c7);
-          border-radius: 16px;
-          border-left: 4px solid #f59e0b;
-        }
-        
-        .help-section p {
-          color: #92400e;
-          font-size: 14px;
-          margin: 0;
-        }
-        
         .footer {
           background: linear-gradient(135deg, #78350f, #92400e);
           padding: 30px;
           text-align: center;
           color: white;
         }
-        
-        .tagline {
-          font-family: 'Dancing Script', cursive;
-          font-size: 18px;
-          font-weight: 500;
-          color: #fde68a;
-          margin-bottom: 20px;
-          letter-spacing: 0.5px;
-        }
-        
-        .established {
-          font-family: 'Times New Roman', serif;
-          font-size: 12px;
-          letter-spacing: 2px;
-          color: #fcd34d;
-          margin: 10px 0;
-          text-transform: uppercase;
-        }
-        
-        .divider {
-          width: 60px;
-          height: 2px;
-          background: linear-gradient(90deg, transparent, #f59e0b, transparent);
-          margin: 20px auto;
-        }
-        
-        .contact-info {
-          font-size: 12px;
-          line-height: 1.8;
-          color: #fed7aa;
-          margin-top: 20px;
-        }
-        
-        .footer-text {
-          font-size: 11px;
-          color: #fed7aa;
-          margin-top: 20px;
-          opacity: 0.8;
-        }
-        
-        @media (max-width: 600px) {
-          .content {
-            padding: 30px 20px;
-          }
-          
-          .brand-name {
-            font-size: 24px;
-          }
-        }
-        
         @import url('https://fonts.googleapis.com/css2?family=Dancing+Script:wght@400;500;600;700&display=swap');
       </style>
     </head>
     <body>
       <div class="container">
         <div class="header">
-          <div class="logo-wrapper">
-            <div class="logo">
-              <img src="${process.env.LOGO_URL || "https://suvasplaceresort.com/images/small-logo.png"}" alt="Suva's Place Resort" />
-            </div>
+          <div class="logo">
+            <img src="${process.env.LOGO_URL || "https://suvasplaceresort.com/images/small-logo.png"}" alt="Suva's Place Resort" />
           </div>
           <div class="brand-name">Suva's Place</div>
-          <div class="brand-subtitle">Resort Antipolo</div>
         </div>
         
         <div class="content">
@@ -1325,17 +502,9 @@ export const sendVerificationEmail = async (guest, verificationToken) => {
             Welcome, <strong>${guest.firstName} ${guest.lastName}</strong>! 🎉
           </div>
           
-          <div class="message-text">
-            Thank you for creating an account with Suva's Place Resort. Please verify your email address to complete your registration and start enjoying our services.
-          </div>
-          
           <div class="verification-box">
-            <div class="verification-icon">📧</div>
             <div style="font-size: 18px; font-weight: 600; color: #78350f; margin-bottom: 10px;">
               Verify Your Email Address
-            </div>
-            <div style="color: #92400e; margin-bottom: 20px;">
-              Click the button below to activate your account
             </div>
             <a href="${verificationUrl}" class="button">
               Activate My Account →
@@ -1344,35 +513,11 @@ export const sendVerificationEmail = async (guest, verificationToken) => {
               This link will expire in 24 hours
             </div>
           </div>
-          
-          <div class="help-section">
-            <p>
-              <strong>💡 Didn't request this?</strong><br>
-              If you didn't create an account with Suva's Place Resort, you can safely ignore this email.
-            </p>
-            <p style="margin-top: 10px;">
-              <strong>❓ Need help?</strong><br>
-              Contact us at +63 976023356 or reply to this email.
-            </p>
-          </div>
         </div>
         
         <div class="footer">
           <div class="tagline">Have Fun Under The Sun</div>
-          <div class="established">Est. 1971</div>
-          <div class="divider"></div>
-          
-          <div class="contact-info">
-            <strong>Suva's Place Resort</strong><br>
-            Antipolo City, Rizal, Philippines<br>
-            📞 +63 976023356<br>
-            📧 suvasplaceinc@gmail.com
-          </div>
-          
-          <div class="footer-text">
-            This is an automated verification email from Suva's Place Resort.<br>
-            Please do not reply directly to this email.
-          </div>
+          <div>📞 +63 976023356 | 📧 suvasplaceinc@gmail.com</div>
         </div>
       </div>
     </body>
@@ -1381,12 +526,15 @@ export const sendVerificationEmail = async (guest, verificationToken) => {
 
   return await sendEmail({ to: guest.email, subject, html });
 };
-// config/email.js - Add this function
 
-export const sendPasswordResetEmail = async (guest, resetToken) => {
+// Guest Password Reset Email
+export const sendPasswordResetEmail = async (user, resetToken) => {
   const resetUrl = `${process.env.FRONTEND_URL}/reset-password?token=${resetToken}`;
+  const isGuest = !user.role; // Check if it's a guest (no role field)
 
   const subject = "Reset Your Password - Suva's Place Resort";
+
+  const roleText = isGuest ? "guest account" : "staff account";
 
   const html = `
     <!DOCTYPE html>
@@ -1396,19 +544,13 @@ export const sendPasswordResetEmail = async (guest, resetToken) => {
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
       <title>Reset Your Password</title>
       <style>
-        * {
-          margin: 0;
-          padding: 0;
-          box-sizing: border-box;
-        }
-        
+        * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
           font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
           line-height: 1.6;
           background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
           padding: 20px;
         }
-        
         .container {
           max-width: 600px;
           margin: 0 auto;
@@ -1417,37 +559,11 @@ export const sendPasswordResetEmail = async (guest, resetToken) => {
           overflow: hidden;
           box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
         }
-        
         .header {
           background: linear-gradient(135deg, #f59e0b, #d97706);
           padding: 40px 30px;
           text-align: center;
-          position: relative;
-          overflow: hidden;
         }
-        
-        .header::before {
-          content: '';
-          position: absolute;
-          top: -50%;
-          right: -50%;
-          width: 200%;
-          height: 200%;
-          background: radial-gradient(circle, rgba(255,215,0,0.2) 0%, transparent 70%);
-          animation: shimmer 10s infinite;
-        }
-        
-        @keyframes shimmer {
-          0%, 100% { transform: translate(0, 0); }
-          50% { transform: translate(20%, 20%); }
-        }
-        
-        .logo-wrapper {
-          margin-bottom: 20px;
-          position: relative;
-          display: inline-block;
-        }
-        
         .logo {
           width: 80px;
           height: 80px;
@@ -1456,55 +572,28 @@ export const sendPasswordResetEmail = async (guest, resetToken) => {
           display: inline-flex;
           align-items: center;
           justify-content: center;
-          box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.2);
+          margin-bottom: 20px;
         }
-        
         .logo img {
           width: 60px;
           height: 60px;
           object-fit: contain;
         }
-        
         .brand-name {
           font-family: 'Dancing Script', cursive;
           font-size: 32px;
           font-weight: bold;
           color: white;
-          margin-bottom: 8px;
-          text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.2);
         }
-        
-        .brand-subtitle {
-          font-family: 'Times New Roman', serif;
-          font-size: 14px;
-          color: rgba(255, 255, 255, 0.9);
-          letter-spacing: 1px;
-          font-style: italic;
-        }
-        
         .content {
           padding: 40px 30px;
           background: white;
         }
-        
         .greeting {
           font-size: 24px;
           color: #78350f;
           margin-bottom: 20px;
-          font-weight: 600;
         }
-        
-        .greeting strong {
-          color: #b45309;
-        }
-        
-        .message-text {
-          color: #6b4c2c;
-          margin-bottom: 30px;
-          line-height: 1.8;
-          font-size: 16px;
-        }
-        
         .reset-box {
           background: linear-gradient(135deg, #fffbeb, #fef3c7);
           border-radius: 16px;
@@ -1513,12 +602,6 @@ export const sendPasswordResetEmail = async (guest, resetToken) => {
           margin: 30px 0;
           border: 2px solid #f59e0b;
         }
-        
-        .reset-icon {
-          font-size: 48px;
-          margin-bottom: 20px;
-        }
-        
         .button {
           display: inline-block;
           padding: 14px 32px;
@@ -1528,94 +611,41 @@ export const sendPasswordResetEmail = async (guest, resetToken) => {
           border-radius: 50px;
           font-weight: 600;
           margin: 20px 0;
-          transition: all 0.3s ease;
-          box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
         }
-        
-        .button:hover {
-          transform: translateY(-2px);
-          box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.2);
-        }
-        
         .warning-text {
           font-size: 12px;
           color: #92400e;
           margin-top: 15px;
         }
-        
-        .help-section {
-          margin-top: 30px;
-          padding: 20px;
-          background: linear-gradient(135deg, #fffbeb, #fef3c7);
-          border-radius: 16px;
-          border-left: 4px solid #f59e0b;
-        }
-        
         .footer {
           background: linear-gradient(135deg, #78350f, #92400e);
           padding: 30px;
           text-align: center;
           color: white;
         }
-        
-        .tagline {
-          font-family: 'Dancing Script', cursive;
-          font-size: 18px;
-          font-weight: 500;
-          color: #fde68a;
-          margin-bottom: 20px;
-        }
-        
-        .divider {
-          width: 60px;
-          height: 2px;
-          background: linear-gradient(90deg, transparent, #f59e0b, transparent);
-          margin: 20px auto;
-        }
-        
-        .contact-info {
-          font-size: 12px;
-          line-height: 1.8;
-          color: #fed7aa;
-          margin-top: 20px;
-        }
-        
-        .footer-text {
-          font-size: 11px;
-          color: #fed7aa;
-          margin-top: 20px;
-          opacity: 0.8;
-        }
-        
         @import url('https://fonts.googleapis.com/css2?family=Dancing+Script:wght@400;500;600;700&display=swap');
       </style>
     </head>
     <body>
       <div class="container">
         <div class="header">
-          <div class="logo-wrapper">
-            <div class="logo">
-              <img src="${process.env.LOGO_URL || "https://suvasplaceresort.com/images/small-logo.png"}" alt="Suva's Place Resort" />
-            </div>
+          <div class="logo">
+            <img src="${process.env.LOGO_URL || "https://suvasplaceresort.com/images/small-logo.png"}" alt="Suva's Place Resort" />
           </div>
           <div class="brand-name">Suva's Place</div>
-          <div class="brand-subtitle">Resort Antipolo</div>
         </div>
         
         <div class="content">
           <div class="greeting">
-            Hello, <strong>${guest.firstName} ${guest.lastName}</strong>
-          </div>
-          
-          <div class="message-text">
-            We received a request to reset the password for your Suva's Place Resort account. 
-            Click the button below to create a new password. This link will expire in 1 hour.
+            Hello, <strong>${user.firstName} ${user.lastName}</strong>
           </div>
           
           <div class="reset-box">
-            <div class="reset-icon">🔐</div>
             <div style="font-size: 18px; font-weight: 600; color: #78350f; margin-bottom: 10px;">
               Reset Your Password
+            </div>
+            <div style="color: #92400e; margin-bottom: 20px;">
+              We received a request to reset the password for your ${roleText}.
             </div>
             <a href="${resetUrl}" class="button">
               Reset Password →
@@ -1625,38 +655,634 @@ export const sendPasswordResetEmail = async (guest, resetToken) => {
             </div>
           </div>
           
-          <div class="help-section">
-            <p>
+          <div style="margin-top: 20px; padding: 15px; background: #fef3c7; border-radius: 12px;">
+            <p style="color: #92400e; font-size: 14px;">
               <strong>💡 Didn't request this?</strong><br>
               If you didn't request a password reset, you can safely ignore this email. Your password will not be changed.
-            </p>
-            <p style="margin-top: 10px;">
-              <strong>❓ Need help?</strong><br>
-              Contact us at +63 976023356 or reply to this email.
             </p>
           </div>
         </div>
         
         <div class="footer">
           <div class="tagline">Have Fun Under The Sun</div>
-          <div class="divider"></div>
-          
-          <div class="contact-info">
-            <strong>Suva's Place Resort</strong><br>
-            Antipolo City, Rizal, Philippines<br>
-            📞 +63 976023356<br>
-            📧 suvasplaceinc@gmail.com
-          </div>
-          
-          <div class="footer-text">
-            This is an automated password reset email from Suva's Place Resort.<br>
-            Please do not reply directly to this email.
-          </div>
+          <div>📞 +63 976023356 | 📧 suvasplaceinc@gmail.com</div>
         </div>
       </div>
     </body>
     </html>
   `;
 
-  return await sendEmail({ to: guest.email, subject, html });
+  return await sendEmail({ to: user.email, subject, html });
+};
+
+/* ==================== STAFF USER EMAIL TEMPLATES ==================== */
+
+// Staff Welcome Email (for new staff accounts)
+export const sendStaffWelcomeEmail = async (user, password) => {
+  const subject = "Welcome to Suva's Place Resort Staff Portal! 👋";
+
+  const html = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>Welcome to Staff Portal</title>
+      <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+          line-height: 1.6;
+          background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+          padding: 20px;
+        }
+        .container {
+          max-width: 600px;
+          margin: 0 auto;
+          background: #ffffff;
+          border-radius: 24px;
+          overflow: hidden;
+          box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+        }
+        .header {
+          background: linear-gradient(135deg, #1e293b, #0f172a);
+          padding: 40px 30px;
+          text-align: center;
+        }
+        .logo {
+          width: 80px;
+          height: 80px;
+          background: white;
+          border-radius: 50%;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          margin-bottom: 20px;
+        }
+        .logo img {
+          width: 60px;
+          height: 60px;
+          object-fit: contain;
+        }
+        .brand-name {
+          font-family: 'Dancing Script', cursive;
+          font-size: 32px;
+          font-weight: bold;
+          color: white;
+        }
+        .badge {
+          display: inline-block;
+          padding: 6px 12px;
+          background: rgba(255, 255, 255, 0.2);
+          border-radius: 50px;
+          font-size: 12px;
+          color: white;
+          margin-top: 15px;
+        }
+        .content {
+          padding: 40px 30px;
+          background: white;
+        }
+        .greeting {
+          font-size: 24px;
+          color: #1e293b;
+          margin-bottom: 20px;
+        }
+        .role-badge {
+          display: inline-block;
+          padding: 4px 12px;
+          background: #f59e0b;
+          color: white;
+          border-radius: 50px;
+          font-size: 12px;
+          font-weight: 600;
+          margin-left: 10px;
+          text-transform: uppercase;
+        }
+        .credentials-box {
+          background: linear-gradient(135deg, #f1f5f9, #e2e8f0);
+          border-radius: 16px;
+          padding: 25px;
+          margin: 25px 0;
+          border-left: 4px solid #f59e0b;
+        }
+        .credential-row {
+          display: flex;
+          justify-content: space-between;
+          padding: 12px 0;
+          border-bottom: 1px solid #cbd5e1;
+        }
+        .credential-label {
+          font-weight: 600;
+          color: #475569;
+        }
+        .credential-value {
+          color: #0f172a;
+          font-family: monospace;
+          font-size: 14px;
+        }
+        .button {
+          display: inline-block;
+          padding: 14px 32px;
+          background: linear-gradient(135deg, #f59e0b, #d97706);
+          color: white;
+          text-decoration: none;
+          border-radius: 50px;
+          font-weight: 600;
+          margin: 20px 0;
+        }
+        .warning-box {
+          background: #fef3c7;
+          padding: 15px;
+          border-radius: 12px;
+          margin-top: 20px;
+        }
+        .footer {
+          background: #1e293b;
+          padding: 30px;
+          text-align: center;
+          color: #94a3b8;
+        }
+        @import url('https://fonts.googleapis.com/css2?family=Dancing+Script:wght@400;500;600;700&display=swap');
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <div class="header">
+          <div class="logo">
+            <img src="${process.env.LOGO_URL || "https://suvasplaceresort.com/images/small-logo.png"}" alt="Suva's Place Resort" />
+          </div>
+          <div class="brand-name">Suva's Place</div>
+          <div class="badge">Staff Portal</div>
+        </div>
+        
+        <div class="content">
+          <div class="greeting">
+            Welcome to the Team, <strong>${user.firstName} ${user.lastName}</strong>! 🎉
+            <span class="role-badge">${user.role}</span>
+          </div>
+          
+          <p style="color: #475569; margin-bottom: 20px;">
+            Your staff account has been created. You can now access the Suva's Place Resort Management System.
+          </p>
+          
+          <div class="credentials-box">
+            <h3 style="color: #0f172a; margin-bottom: 15px;">🔐 Your Login Credentials</h3>
+            <div class="credential-row">
+              <span class="credential-label">Username:</span>
+              <span class="credential-value">${user.username}</span>
+            </div>
+            <div class="credential-row">
+              <span class="credential-label">Email:</span>
+              <span class="credential-value">${user.email}</span>
+            </div>
+            <div class="credential-row">
+              <span class="credential-label">Temporary Password:</span>
+              <span class="credential-value">${password}</span>
+            </div>
+          </div>
+          
+          <div style="text-align: center;">
+            <a href="${process.env.FRONTEND_ADMIN}/" class="button">
+              Access Staff Portal →
+            </a>
+          </div>
+          
+          <div class="warning-box">
+            <p style="color: #92400e; font-size: 14px;">
+              <strong>⚠️ Important:</strong><br>
+              • Please change your password after your first login<br>
+              • Never share your credentials with anyone<br>
+              • For security reasons, this email contains your temporary password
+            </p>
+          </div>
+        </div>
+        
+        <div class="footer">
+          <p>Suva's Place Resort Management System</p>
+          <p style="font-size: 12px; margin-top: 10px;">This is an automated message. Please do not reply.</p>
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
+
+  return await sendEmail({ to: user.email, subject, html });
+};
+
+// Staff Password Reset Email (can use same as guest but with different styling)
+export const sendStaffPasswordResetEmail = async (user, resetToken) => {
+  const resetUrl = `${process.env.FRONTEND_ADMIN}/reset-password?token=${resetToken}`;
+
+  const subject = "Reset Your Staff Account Password - Suva's Place Resort";
+
+  const html = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>Reset Staff Password</title>
+      <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+          line-height: 1.6;
+          background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+          padding: 20px;
+        }
+        .container {
+          max-width: 600px;
+          margin: 0 auto;
+          background: #ffffff;
+          border-radius: 24px;
+          overflow: hidden;
+          box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+        }
+        .header {
+          background: linear-gradient(135deg, #1e293b, #0f172a);
+          padding: 40px 30px;
+          text-align: center;
+        }
+        .logo {
+          width: 80px;
+          height: 80px;
+          background: white;
+          border-radius: 50%;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          margin-bottom: 20px;
+        }
+        .logo img {
+          width: 60px;
+          height: 60px;
+          object-fit: contain;
+        }
+        .brand-name {
+          font-family: 'Dancing Script', cursive;
+          font-size: 32px;
+          font-weight: bold;
+          color: white;
+        }
+        .content {
+          padding: 40px 30px;
+          background: white;
+        }
+        .reset-box {
+          background: linear-gradient(135deg, #f1f5f9, #e2e8f0);
+          border-radius: 16px;
+          padding: 30px;
+          text-align: center;
+          margin: 30px 0;
+        }
+        .button {
+          display: inline-block;
+          padding: 14px 32px;
+          background: linear-gradient(135deg, #f59e0b, #d97706);
+          color: white;
+          text-decoration: none;
+          border-radius: 50px;
+          font-weight: 600;
+          margin: 20px 0;
+        }
+        .footer {
+          background: #1e293b;
+          padding: 30px;
+          text-align: center;
+          color: #94a3b8;
+        }
+        @import url('https://fonts.googleapis.com/css2?family=Dancing+Script:wght@400;500;600;700&display=swap');
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <div class="header">
+          <div class="logo">
+            <img src="${process.env.LOGO_URL || "https://suvasplaceresort.com/images/small-logo.png"}" alt="Suva's Place Resort" />
+          </div>
+          <div class="brand-name">Suva's Place</div>
+        </div>
+        
+        <div class="content">
+          <h2 style="color: #1e293b;">Reset Staff Password</h2>
+          <p style="color: #475569; margin: 20px 0;">
+            Hello <strong>${user.firstName} ${user.lastName}</strong>,<br>
+            We received a request to reset your staff account password.
+          </p>
+          
+          <div class="reset-box">
+            <a href="${resetUrl}" class="button">
+              Reset Staff Password →
+            </a>
+            <p style="margin-top: 15px; font-size: 12px; color: #64748b;">
+              This link will expire in 1 hour
+            </p>
+          </div>
+          
+          <p style="color: #64748b; font-size: 14px;">
+            If you didn't request this, please contact your system administrator immediately.
+          </p>
+        </div>
+        
+        <div class="footer">
+          <p>Suva's Place Resort - Staff Portal</p>
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
+
+  return await sendEmail({ to: user.email, subject, html });
+};
+
+// Staff Account Locked Email
+export const sendStaffAccountLockedEmail = async (user, lockoutDuration) => {
+  const subject = "Your Staff Account Has Been Locked - Suva's Place Resort";
+
+  const html = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>Account Locked</title>
+      <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+          line-height: 1.6;
+          background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+          padding: 20px;
+        }
+        .container {
+          max-width: 600px;
+          margin: 0 auto;
+          background: #ffffff;
+          border-radius: 24px;
+          overflow: hidden;
+          box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+        }
+        .header {
+          background: linear-gradient(135deg, #dc2626, #b91c1c);
+          padding: 40px 30px;
+          text-align: center;
+        }
+        .content {
+          padding: 40px 30px;
+          background: white;
+        }
+        .button {
+          display: inline-block;
+          padding: 14px 32px;
+          background: linear-gradient(135deg, #f59e0b, #d97706);
+          color: white;
+          text-decoration: none;
+          border-radius: 50px;
+          font-weight: 600;
+          margin: 20px 0;
+        }
+        .footer {
+          background: #1e293b;
+          padding: 30px;
+          text-align: center;
+          color: #94a3b8;
+        }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <div class="header">
+          <h1 style="color: white;">🔒 Account Locked</h1>
+        </div>
+        
+        <div class="content">
+          <h2 style="color: #1e293b;">Security Alert</h2>
+          <p style="color: #475569; margin: 20px 0;">
+            Hello <strong>${user.firstName} ${user.lastName}</strong>,<br><br>
+            Your staff account has been locked due to multiple failed login attempts.
+          </p>
+          
+          <div style="background: #fef3c7; padding: 15px; border-radius: 12px; margin: 20px 0;">
+            <p style="color: #92400e;">
+              <strong>📋 Account Details:</strong><br>
+              • Username: ${user.username}<br>
+              • Lock Duration: ${lockoutDuration} minutes<br>
+              • Please contact an administrator to unlock your account
+            </p>
+          </div>
+          
+          <div style="text-align: center;">
+            <a href="mailto:suvasplaceinc@gmail.com" class="button">
+              Contact Administrator →
+            </a>
+          </div>
+        </div>
+        
+        <div class="footer">
+          <p>Suva's Place Resort - Security Notice</p>
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
+
+  return await sendEmail({ to: user.email, subject, html });
+};
+
+/* ==================== RESERVATION EMAILS ==================== */
+
+// Reservation Status Email (for guests)
+export const sendReservationStatusEmail = async (
+  reservation,
+  guest,
+  oldStatus,
+  newStatus,
+) => {
+  const statusTemplates = {
+    pending: {
+      subject: `Reservation ${reservation.reservationNumber} - Pending Confirmation`,
+      title: "Reservation Received",
+      color: "#f59e0b",
+      icon: "⏳",
+    },
+    confirmed: {
+      subject: `Reservation ${reservation.reservationNumber} - Confirmed! 🎉`,
+      title: "Reservation Confirmed!",
+      color: "#10b981",
+      icon: "✅",
+    },
+    cancelled: {
+      subject: `Reservation ${reservation.reservationNumber} - Cancelled`,
+      title: "Reservation Cancelled",
+      color: "#ef4444",
+      icon: "❌",
+    },
+    checked_in: {
+      subject: `Reservation ${reservation.reservationNumber} - Checked In`,
+      title: "Welcome to Suva's Place!",
+      color: "#3b82f6",
+      icon: "🏊",
+    },
+    checked_out: {
+      subject: `Reservation ${reservation.reservationNumber} - Checked Out`,
+      title: "Thank You for Staying!",
+      color: "#8b5cf6",
+      icon: "🙏",
+    },
+  };
+
+  const template = statusTemplates[newStatus] || statusTemplates.pending;
+
+  const checkInDate = new Date(reservation.checkIn).toLocaleDateString(
+    "en-PH",
+    {
+      weekday: "long",
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+    },
+  );
+
+  const checkOutDate = new Date(reservation.checkOut).toLocaleDateString(
+    "en-PH",
+    {
+      weekday: "long",
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+    },
+  );
+
+  const html = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>${template.subject}</title>
+      <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+          line-height: 1.6;
+          background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
+          padding: 20px;
+        }
+        .container {
+          max-width: 600px;
+          margin: 0 auto;
+          background: #ffffff;
+          border-radius: 24px;
+          overflow: hidden;
+          box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+        }
+        .header {
+          background: linear-gradient(135deg, ${template.color}, ${template.color}dd);
+          padding: 40px 30px;
+          text-align: center;
+        }
+        .logo {
+          width: 80px;
+          height: 80px;
+          background: white;
+          border-radius: 50%;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          margin-bottom: 20px;
+        }
+        .logo img {
+          width: 60px;
+          height: 60px;
+          object-fit: contain;
+        }
+        .brand-name {
+          font-family: 'Dancing Script', cursive;
+          font-size: 32px;
+          font-weight: bold;
+          color: white;
+        }
+        .content {
+          padding: 40px 30px;
+          background: white;
+        }
+        .reservation-details {
+          background: linear-gradient(135deg, #fffbeb, #fef3c7);
+          border-radius: 20px;
+          padding: 25px;
+          margin: 30px 0;
+        }
+        .button {
+          display: inline-block;
+          padding: 14px 32px;
+          background: linear-gradient(135deg, ${template.color}, ${template.color}dd);
+          color: white;
+          text-decoration: none;
+          border-radius: 50px;
+          font-weight: 600;
+        }
+        .footer {
+          background: linear-gradient(135deg, #78350f, #92400e);
+          padding: 30px;
+          text-align: center;
+          color: white;
+        }
+        @import url('https://fonts.googleapis.com/css2?family=Dancing+Script:wght@400;500;600;700&display=swap');
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <div class="header">
+          <div class="logo">
+            <img src="${process.env.LOGO_URL || "https://suvasplaceresort.com/images/small-logo.png"}" alt="Suva's Place Resort" />
+          </div>
+          <div class="brand-name">Suva's Place</div>
+          <div style="font-size: 48px; margin-top: 20px;">${template.icon}</div>
+        </div>
+        
+        <div class="content">
+          <h2 style="color: #78350f;">${template.title}</h2>
+          <p style="color: #6b4c2c; margin: 20px 0;">
+            Dear <strong>${guest.firstName} ${guest.lastName}</strong>,
+          </p>
+          
+          <div class="reservation-details">
+            <h3 style="color: #78350f; margin-bottom: 15px;">📋 Reservation Details</h3>
+            <p><strong>Reservation Number:</strong> ${reservation.reservationNumber}</p>
+            <p><strong>Check-in:</strong> ${checkInDate}</p>
+            <p><strong>Check-out:</strong> ${checkOutDate}</p>
+            <p><strong>Nights:</strong> ${reservation.nights}</p>
+          </div>
+          
+          <div style="text-align: center;">
+            <a href="${process.env.FRONTEND_URL}/bookings" class="button">
+              View Reservation →
+            </a>
+          </div>
+        </div>
+        
+        <div class="footer">
+          <div class="tagline">Have Fun Under The Sun</div>
+          <div>📞 +63 976023356 | 📧 suvasplaceinc@gmail.com</div>
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
+
+  return await sendEmail({ to: guest.email, subject: template.subject, html });
+};
+
+// Export all email functions
+export default {
+  sendEmail,
+  sendWelcomeEmail,
+  sendVerificationEmail,
+  sendPasswordResetEmail,
+  sendStaffWelcomeEmail,
+  sendStaffPasswordResetEmail,
+  sendStaffAccountLockedEmail,
+  sendReservationStatusEmail,
+  verifyEmailConnection,
 };

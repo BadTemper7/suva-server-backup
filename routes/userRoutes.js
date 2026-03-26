@@ -1,6 +1,6 @@
 import express from "express";
 import {
-  registerUser,
+  createUser, // Changed from registerUser
   loginUser,
   getUsers,
   getUserById,
@@ -9,6 +9,9 @@ import {
   deleteManyUsers,
   unlockUserAccount,
   getUserLoginStats,
+  requestPasswordReset,
+  resetPassword,
+  getCurrentUser,
 } from "../controllers/userController.js";
 
 import {
@@ -19,16 +22,19 @@ import {
 
 const router = express.Router();
 
-// Register (Admin only)
-router.post("/register", protect, adminOnly, registerUser);
-
-// Login
+// Public routes
 router.post("/login", loginUser);
+router.post("/reset-password-request", requestPasswordReset);
+router.post("/reset-password", resetPassword);
 
-// CRUD (Admin only)
+// Protected routes (require authentication)
+router.get("/me", protect, getCurrentUser);
 router.get("/", protect, receptionistOrAdmin, getUsers);
 router.get("/stats/login", protect, adminOnly, getUserLoginStats);
 router.get("/:id", protect, adminOnly, getUserById);
+
+// Superadmin only routes (create, update, delete users)
+router.post("/", protect, adminOnly, createUser); // Changed from /register to /
 router.put("/:id", protect, adminOnly, updateUser);
 router.patch("/:id/unlock", protect, adminOnly, unlockUserAccount);
 router.delete("/:id", protect, adminOnly, deleteUser);

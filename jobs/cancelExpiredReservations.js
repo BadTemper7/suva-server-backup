@@ -1,13 +1,12 @@
 // jobs/cancelExpiredReservations.js
 import mongoose from "mongoose";
-import Reservation from "../models/Reservation.js";
 import Billing from "../models/Billing.js";
 import Receipt from "../models/Receipt.js";
 import ReservationModel from "../models/Reservation.js";
 import { createNotification } from "../models/Notification.js";
 import { emailQueue } from "../utils/emailQueue.js";
 import { broadcast } from "../wsServer.js";
-const { ReservationRoom } = ReservationModel;
+const { Reservation, ReservationRoom } = ReservationModel;
 /**
  * Cancel expired pending reservations
  * Runs automatically to clean up reservations that have been pending for too long
