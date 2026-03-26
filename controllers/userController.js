@@ -746,3 +746,53 @@ export const getCurrentUser = async (req, res) => {
     });
   }
 };
+export const changePassword = async (req, res) => {
+  try {
+    const { userId, newPassword } = req.body;
+
+    if (!userId || !newPassword) {
+      return res.status(400).json({
+        success: false,
+        message: "User ID and new password are required",
+      });
+    }
+
+    // Validate password strength
+    if (!isValidPassword(newPassword)) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Password must be 8-16 chars, include 1 uppercase, 1 lowercase, 1 number, and 1 special character",
+      });
+    }
+
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    // Update password
+    user.password = newPassword;
+    await user.save();
+
+    const userResponse = user.toObject();
+    delete userResponse.password;
+    delete userResponse.resetPasswordToken;
+    delete userResponse.resetPasswordExpires;
+
+    return res.status(200).json({
+      success: true,
+      message: "Password changed successfully",
+      user: userResponse,
+    });
+  } catch (error) {
+    console.error("Error in changePassword:", error);
+    return res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};

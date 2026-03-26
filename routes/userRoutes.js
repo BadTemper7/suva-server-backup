@@ -12,6 +12,7 @@ import {
   requestPasswordReset,
   resetPassword,
   getCurrentUser,
+  changePassword,
 } from "../controllers/userController.js";
 
 import {
@@ -31,6 +32,7 @@ router.post("/reset-password", resetPassword);
 router.get("/me", protect, getCurrentUser);
 router.get("/", protect, receptionistOrAdmin, getUsers);
 router.get("/stats/login", protect, adminOnly, getUserLoginStats);
+router.post("/change-password", protect, changePassword);
 router.get("/:id", protect, adminOnly, getUserById);
 
 // Superadmin only routes (create, update, delete users)
