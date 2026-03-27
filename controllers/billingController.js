@@ -468,122 +468,76 @@ export const generateBillingReport = async (req, res) => {
       return { startUTC, endUTC };
     };
 
+    // Helper to get current Philippine date
+    const getCurrentPHDate = () => {
+      const now = new Date();
+      const phTime = new Date(now.getTime() + 8 * 60 * 60 * 1000);
+      const year = phTime.getUTCFullYear();
+      const month = String(phTime.getUTCMonth() + 1).padStart(2, "0");
+      const day = String(phTime.getUTCDate()).padStart(2, "0");
+      return `${year}-${month}-${day}`;
+    };
+
     // Calculate date range based on period
     switch (period) {
       case "daily":
-        if (date) {
-          const { startUTC, endUTC } = getPHDateRange(date);
-          start = startUTC;
-          end = endUTC;
-        } else {
-          // Get current Philippine date
-          const now = new Date();
-          const phNow = new Date(now.getTime() + 8 * 60 * 60 * 1000);
-          const phYear = phNow.getUTCFullYear();
-          const phMonth = phNow.getUTCMonth();
-          const phDay = phNow.getUTCDate();
-          const todayStr = `${phYear}-${String(phMonth + 1).padStart(2, "0")}-${String(phDay).padStart(2, "0")}`;
-          const { startUTC, endUTC } = getPHDateRange(todayStr);
-          start = startUTC;
-          end = endUTC;
+        let targetDate = date;
+        if (!targetDate) {
+          targetDate = getCurrentPHDate();
         }
+        const { startUTC, endUTC } = getPHDateRange(targetDate);
+        start = startUTC;
+        end = endUTC;
         break;
 
       case "weekly":
-        // Get current Philippine date for week calculation
-        const now = new Date();
-        const phNow = new Date(now.getTime() + 8 * 60 * 60 * 1000);
-        const phYear = phNow.getUTCFullYear();
-        const phMonth = phNow.getUTCMonth();
-        const phDay = phNow.getUTCDate();
+        // For weekly reports - simplified for now
+        const currentPHDate = getCurrentPHDate();
+        const [currentYear, currentMonth, currentDay] =
+          currentPHDate.split("-");
+        const currentPHDateObj = new Date(
+          parseInt(currentYear),
+          parseInt(currentMonth) - 1,
+          parseInt(currentDay),
+        );
+        const dayOfWeek = currentPHDateObj.getDay();
+        const diff = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+        const weekStartPH = new Date(currentPHDateObj);
+        weekStartPH.setDate(currentPHDateObj.getDate() - diff);
+        const weekEndPH = new Date(weekStartPH);
+        weekEndPH.setDate(weekStartPH.getDate() + 6);
 
-        let weekStart, weekEnd;
+        const weekStartStr = `${weekStartPH.getFullYear()}-${String(weekStartPH.getMonth() + 1).padStart(2, "0")}-${String(weekStartPH.getDate()).padStart(2, "0")}`;
+        const weekEndStr = `${weekEndPH.getFullYear()}-${String(weekEndPH.getMonth() + 1).padStart(2, "0")}-${String(weekEndPH.getDate()).padStart(2, "0")}`;
 
-        if (week && year) {
-          // Calculate start of week based on week number in Philippine time
-          const firstDayOfYear = new Date(Date.UTC(parseInt(year), 0, 1));
-          const daysOffset = (parseInt(week) - 1) * 7;
-          const weekStartPH = new Date(firstDayOfYear);
-          weekStartPH.setUTCDate(firstDayOfYear.getUTCDate() + daysOffset);
-          // Adjust to start of week (Monday)
-          const dayOfWeek = weekStartPH.getUTCDay();
-          const diff = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
-          weekStartPH.setUTCDate(weekStartPH.getUTCDate() - diff);
-
-          const weekStartStr = `${weekStartPH.getUTCFullYear()}-${String(weekStartPH.getUTCMonth() + 1).padStart(2, "0")}-${String(weekStartPH.getUTCDate()).padStart(2, "0")}`;
-          const weekEndPH = new Date(weekStartPH);
-          weekEndPH.setUTCDate(weekStartPH.getUTCDate() + 6);
-          const weekEndStr = `${weekEndPH.getUTCFullYear()}-${String(weekEndPH.getUTCMonth() + 1).padStart(2, "0")}-${String(weekEndPH.getUTCDate()).padStart(2, "0")}`;
-
-          const { startUTC: startWeek } = getPHDateRange(weekStartStr);
-          const { endUTC: endWeek } = getPHDateRange(weekEndStr);
-          start = startWeek;
-          end = endWeek;
-        } else {
-          // Current week
-          const todayPH = new Date(phYear, phMonth, phDay);
-          const dayOfWeek = todayPH.getDay();
-          const diff = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
-          const weekStartPH = new Date(todayPH);
-          weekStartPH.setDate(todayPH.getDate() - diff);
-          const weekEndPH = new Date(weekStartPH);
-          weekEndPH.setDate(weekStartPH.getDate() + 6);
-
-          const weekStartStr = `${weekStartPH.getFullYear()}-${String(weekStartPH.getMonth() + 1).padStart(2, "0")}-${String(weekStartPH.getDate()).padStart(2, "0")}`;
-          const weekEndStr = `${weekEndPH.getFullYear()}-${String(weekEndPH.getMonth() + 1).padStart(2, "0")}-${String(weekEndPH.getDate()).padStart(2, "0")}`;
-
-          const { startUTC: startWeek } = getPHDateRange(weekStartStr);
-          const { endUTC: endWeek } = getPHDateRange(weekEndStr);
-          start = startWeek;
-          end = endWeek;
-        }
+        const { startUTC: startWeek } = getPHDateRange(weekStartStr);
+        const { endUTC: endWeek } = getPHDateRange(weekEndStr);
+        start = startWeek;
+        end = endWeek;
         break;
 
       case "monthly":
-        if (month) {
-          const [yearPart, monthPart] = month.split("-");
-          // Get first day of month in Philippine time
-          const firstDayPH = new Date(
-            parseInt(yearPart),
-            parseInt(monthPart) - 1,
-            1,
-          );
-          const lastDayPH = new Date(
-            parseInt(yearPart),
-            parseInt(monthPart),
-            0,
-          );
-
-          const firstDayStr = `${firstDayPH.getFullYear()}-${String(firstDayPH.getMonth() + 1).padStart(2, "0")}-${String(firstDayPH.getDate()).padStart(2, "0")}`;
-          const lastDayStr = `${lastDayPH.getFullYear()}-${String(lastDayPH.getMonth() + 1).padStart(2, "0")}-${String(lastDayPH.getDate()).padStart(2, "0")}`;
-
-          const { startUTC: startMonth } = getPHDateRange(firstDayStr);
-          const { endUTC: endMonth } = getPHDateRange(lastDayStr);
-          start = startMonth;
-          end = endMonth;
-        } else {
-          // Current month
+        let targetMonth = month;
+        if (!targetMonth) {
           const now = new Date();
           const phNow = new Date(now.getTime() + 8 * 60 * 60 * 1000);
-          const firstDayPH = new Date(
-            phNow.getUTCFullYear(),
-            phNow.getUTCMonth(),
-            1,
-          );
-          const lastDayPH = new Date(
-            phNow.getUTCFullYear(),
-            phNow.getUTCMonth() + 1,
-            0,
-          );
-
-          const firstDayStr = `${firstDayPH.getFullYear()}-${String(firstDayPH.getMonth() + 1).padStart(2, "0")}-${String(firstDayPH.getDate()).padStart(2, "0")}`;
-          const lastDayStr = `${lastDayPH.getFullYear()}-${String(lastDayPH.getMonth() + 1).padStart(2, "0")}-${String(lastDayPH.getDate()).padStart(2, "0")}`;
-
-          const { startUTC: startMonth } = getPHDateRange(firstDayStr);
-          const { endUTC: endMonth } = getPHDateRange(lastDayStr);
-          start = startMonth;
-          end = endMonth;
+          targetMonth = `${phNow.getUTCFullYear()}-${String(phNow.getUTCMonth() + 1).padStart(2, "0")}`;
         }
+        const [yearPart, monthPart] = targetMonth.split("-");
+        const firstDayPH = new Date(
+          parseInt(yearPart),
+          parseInt(monthPart) - 1,
+          1,
+        );
+        const lastDayPH = new Date(parseInt(yearPart), parseInt(monthPart), 0);
+
+        const firstDayStr = `${firstDayPH.getFullYear()}-${String(firstDayPH.getMonth() + 1).padStart(2, "0")}-${String(firstDayPH.getDate()).padStart(2, "0")}`;
+        const lastDayStr = `${lastDayPH.getFullYear()}-${String(lastDayPH.getMonth() + 1).padStart(2, "0")}-${String(lastDayPH.getDate()).padStart(2, "0")}`;
+
+        const { startUTC: startMonth } = getPHDateRange(firstDayStr);
+        const { endUTC: endMonth } = getPHDateRange(lastDayStr);
+        start = startMonth;
+        end = endMonth;
         break;
 
       case "yearly":
@@ -632,13 +586,16 @@ export const generateBillingReport = async (req, res) => {
     console.log("Calculated date range (UTC):", {
       start: start.toISOString(),
       end: end.toISOString(),
-      startPH: new Date(start.getTime() + 8 * 60 * 60 * 1000)
-        .toISOString()
-        .replace("Z", ""),
-      endPH: new Date(end.getTime() + 8 * 60 * 60 * 1000)
-        .toISOString()
-        .replace("Z", ""),
     });
+    console.log("This corresponds to Philippine date range:");
+    console.log(
+      "Start Philippine:",
+      new Date(start.getTime() + 8 * 60 * 60 * 1000).toISOString(),
+    );
+    console.log(
+      "End Philippine:",
+      new Date(end.getTime() + 8 * 60 * 60 * 1000).toISOString(),
+    );
 
     // Fetch billings within date range
     const billings = await Billing.find({
