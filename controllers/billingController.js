@@ -1606,3 +1606,86 @@ export const processRefund = async (req, res) => {
     return res.status(500).json({ error: error.message });
   }
 };
+
+// Add this temporary test endpoint
+export const testTimezone = async (req, res) => {
+  try {
+    const { date } = req.query;
+
+    // Current server time
+    const now = new Date();
+    const serverTime = {
+      iso: now.toISOString(),
+      local: now.toString(),
+      phTime: now.toLocaleString("en-PH", { timeZone: "Asia/Manila" }),
+      timestamp: now.getTime(),
+    };
+
+    // Parse date if provided
+    let parsedDate = null;
+    if (date) {
+      const [year, month, day] = date.split("-");
+      const localDate = new Date(
+        parseInt(year),
+        parseInt(month) - 1,
+        parseInt(day),
+      );
+      parsedDate = {
+        input: date,
+        parsed: localDate.toISOString(),
+        localStart: localDate.toString(),
+        localEnd: new Date(
+          localDate.getFullYear(),
+          localDate.getMonth(),
+          localDate.getDate(),
+          23,
+          59,
+          59,
+          999,
+        ).toString(),
+      };
+    }
+
+    // Check if billings exist for today
+    const todayStart = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate(),
+      0,
+      0,
+      0,
+      0,
+    );
+    const todayEnd = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate(),
+      23,
+      59,
+      59,
+      999,
+    );
+
+    const todayBillings = await Billing.find({
+      createdAt: { $gte: todayStart, $lte: todayEnd },
+    }).limit(5);
+
+    res.json({
+      serverTime,
+      parsedDate,
+      todayBillingsCount: todayBillings.length,
+      todayBillingsSample: todayBillings.map((b) => ({
+        id: b._id,
+        number: b.billingNumber,
+        createdAt: b.createdAt,
+        createdAtLocal: b.createdAt.toLocaleString("en-PH", {
+          timeZone: "Asia/Manila",
+        }),
+      })),
+      message:
+        "Timezone test endpoint - check if server is using correct timezone",
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};

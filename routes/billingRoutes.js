@@ -9,6 +9,7 @@ import {
   generateBillingReport,
   exportBillingReport,
   processRefund,
+  testTimezone,
 } from "../controllers/billingController.js";
 
 const router = express.Router();
@@ -16,6 +17,7 @@ const router = express.Router();
 // Generate or update billing for a reservation
 // POST /api/billing
 router.get("/", getBillings);
+router.get("/test-timezone", testTimezone);
 router.post("/", generateBilling);
 router.get("/reports", generateBillingReport);
 router.get("/reports/export", exportBillingReport);
