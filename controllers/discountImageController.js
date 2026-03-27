@@ -235,3 +235,174 @@ const applyDiscountsToBilling = async (billingId) => {
 
   await billing.save();
 };
+
+/**
+ * ---------------------------------------------
+ * GET DISCOUNT IMAGES BY BILLING ID
+ * ---------------------------------------------
+ */
+export const getDiscountImagesByBilling = async (req, res) => {
+  try {
+    const { billingId } = req.params;
+
+    if (!mongoose.isValidObjectId(billingId)) {
+      return res.status(400).json({ error: "Invalid billingId" });
+    }
+
+    const discountImages = await DiscountImg.find({ billingId })
+      .populate("discountId")
+      .populate("reviewedBy", "firstName lastName username")
+      .sort({ createdAt: -1 });
+
+    return res.status(200).json(discountImages);
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: error.message });
+  }
+};
+
+/**
+ * ---------------------------------------------
+ * GET ALL DISCOUNT IMAGES (with filters)
+ * ---------------------------------------------
+ */
+export const getAllDiscountImages = async (req, res) => {
+  try {
+    const { status, discountId, billingId } = req.query;
+
+    let filter = {};
+    if (status) filter.status = status;
+    if (discountId) filter.discountId = discountId;
+    if (billingId) filter.billingId = billingId;
+
+    const discountImages = await DiscountImg.find(filter)
+      .populate("discountId")
+      .populate("billingId")
+      .populate("reviewedBy", "firstName lastName username")
+      .sort({ createdAt: -1 });
+
+    return res.status(200).json(discountImages);
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: error.message });
+  }
+};
+
+/**
+ * ---------------------------------------------
+ * GET SINGLE DISCOUNT IMAGE
+ * ---------------------------------------------
+ */
+export const getDiscountImageById = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!mongoose.isValidObjectId(id)) {
+      return res.status(400).json({ error: "Invalid discount image id" });
+    }
+
+    const discountImage = await DiscountImg.findById(id)
+      .populate("discountId")
+      .populate("billingId")
+      .populate("reviewedBy", "firstName lastName username");
+
+    if (!discountImage) {
+      return res.status(404).json({ error: "Discount image not found" });
+    }
+
+    return res.status(200).json(discountImage);
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: error.message });
+  }
+};
+
+/**
+ * ---------------------------------------------
+ * DELETE DISCOUNT IMAGE
+ * ---------------------------------------------
+ */
+export const deleteDiscountImage = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!mongoose.isValidObjectId(id)) {
+      return res.status(400).json({ error: "Invalid discount image id" });
+    }
+
+    const discountImage = await DiscountImg.findById(id);
+    if (!discountImage) {
+      return res.status(404).json({ error: "Discount image not found" });
+    }
+
+    // Delete from cloudinary
+    if (discountImage.publicId) {
+      await cloudinary.uploader.destroy(discountImage.publicId);
+    }
+
+    await discountImage.deleteOne();
+
+    return res.status(200).json({
+      message: "Discount image deleted successfully",
+      discountImage,
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: error.message });
+  }
+};
+
+/**
+ * ---------------------------------------------
+ * DELETE MULTIPLE DISCOUNT IMAGES
+ * ---------------------------------------------
+ */
+export const deleteMultipleDiscountImages = async (req, res) => {
+  try {
+    const { discountImageIds } = req.body;
+
+    if (
+      !discountImageIds ||
+      !Array.isArray(discountImageIds) ||
+      discountImageIds.length === 0
+    ) {
+      return res
+        .status(400)
+        .json({ error: "discountImageIds must be a non-empty array" });
+    }
+
+    // Validate all IDs
+    for (const id of discountImageIds) {
+      if (!mongoose.isValidObjectId(id)) {
+        return res
+          .status(400)
+          .json({ error: `Invalid discount image id: ${id}` });
+      }
+    }
+
+    // Get images to delete from cloudinary
+    const imagesToDelete = await DiscountImg.find({
+      _id: { $in: discountImageIds },
+    });
+
+    // Delete from cloudinary
+    for (const image of imagesToDelete) {
+      if (image.publicId) {
+        await cloudinary.uploader.destroy(image.publicId);
+      }
+    }
+
+    // Delete from database
+    const result = await DiscountImg.deleteMany({
+      _id: { $in: discountImageIds },
+    });
+
+    return res.status(200).json({
+      message: `${result.deletedCount} discount image(s) deleted successfully`,
+      deletedCount: result.deletedCount,
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: error.message });
+  }
+};
