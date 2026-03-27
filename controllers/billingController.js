@@ -441,8 +441,15 @@ export const generateBillingReport = async (req, res) => {
     // Calculate date range based on period
     switch (period) {
       case "daily":
-        start = date ? new Date(date) : new Date();
-        start.setHours(0, 0, 0, 0);
+        // Fix: Properly handle daily date range
+        if (date) {
+          start = new Date(date);
+          // Ensure we're using local time
+          start.setHours(0, 0, 0, 0);
+        } else {
+          start = new Date();
+          start.setHours(0, 0, 0, 0);
+        }
         end = new Date(start);
         end.setHours(23, 59, 59, 999);
         break;
@@ -453,13 +460,16 @@ export const generateBillingReport = async (req, res) => {
           // Calculate start of week based on week number
           start = getDateOfISOWeek(parseInt(week), parseInt(year));
         } else {
-          // Current week
+          // Current week - start from Monday or Sunday?
           start = new Date(currentDate);
-          start.setDate(start.getDate() - start.getDay()); // Start of week (Sunday)
+          // Set to start of week (Monday)
+          const day = start.getDay();
+          const diff = day === 0 ? 6 : day - 1; // Adjust for Sunday
+          start.setDate(start.getDate() - diff);
         }
         start.setHours(0, 0, 0, 0);
         end = new Date(start);
-        end.setDate(end.getDate() + 6); // End of week (Saturday)
+        end.setDate(end.getDate() + 6); // End of week (Sunday)
         end.setHours(23, 59, 59, 999);
         break;
 
@@ -507,6 +517,11 @@ export const generateBillingReport = async (req, res) => {
       return res.status(400).json({ error: "Invalid date format" });
     }
 
+    // Debug logging
+    console.log(
+      `Fetching billings from ${start.toISOString()} to ${end.toISOString()}`,
+    );
+
     // Fetch billings within date range
     const billings = await Billing.find({
       createdAt: { $gte: start, $lte: end },
@@ -532,6 +547,8 @@ export const generateBillingReport = async (req, res) => {
         select: "amountPaid createdAt paymentType",
       })
       .sort({ createdAt: 1 });
+
+    console.log(`Found ${billings.length} billings for the period`);
 
     // Calculate summary statistics
     const summary = calculateBillingSummary(billings);
@@ -589,7 +606,6 @@ export const generateBillingReport = async (req, res) => {
     });
   }
 };
-
 /**
  * Calculate summary statistics from billings
  */
