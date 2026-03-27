@@ -1384,6 +1384,9 @@ function formatDate(dateString) {
 /**
  * Generate report data (reused from generateBillingReport)
  */
+/**
+ * Generate report data (reused from generateBillingReport)
+ */
 async function generateReportData(queryParams) {
   const {
     period = "daily",
@@ -1397,24 +1400,64 @@ async function generateReportData(queryParams) {
 
   let start, end;
 
-  // Calculate date range based on period
+  // Helper function to parse date string and return Date object with local timezone
+  const parseLocalDate = (dateStr) => {
+    const [year, month, day] = dateStr.split("-");
+    return new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
+  };
+
+  // Helper function to get start of day in local timezone
+  const getStartOfDay = (dateStr) => {
+    const d = parseLocalDate(dateStr);
+    return d;
+  };
+
+  // Helper function to get end of day in local timezone
+  const getEndOfDay = (dateStr) => {
+    const d = parseLocalDate(dateStr);
+    d.setHours(23, 59, 59, 999);
+    return d;
+  };
+
+  // Calculate date range based on period (using local timezone)
   switch (period) {
     case "daily":
-      start = date ? new Date(date) : new Date();
-      start.setHours(0, 0, 0, 0);
-      end = new Date(start);
-      end.setHours(23, 59, 59, 999);
+      if (date) {
+        start = getStartOfDay(date);
+        end = getEndOfDay(date);
+      } else {
+        const now = new Date();
+        const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+        start = getStartOfDay(todayStr);
+        end = getEndOfDay(todayStr);
+      }
       break;
 
     case "weekly":
       const currentDate = new Date();
       if (week && year) {
-        start = getDateOfISOWeek(parseInt(week), parseInt(year));
+        const firstDayOfYear = new Date(parseInt(year), 0, 1);
+        const daysOffset = (parseInt(week) - 1) * 7;
+        start = new Date(firstDayOfYear);
+        start.setDate(firstDayOfYear.getDate() + daysOffset);
+        const dayOfWeek = start.getDay();
+        const diff = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+        start.setDate(start.getDate() - diff);
       } else {
+        const day = currentDate.getDay();
+        const diff = day === 0 ? 6 : day - 1;
         start = new Date(currentDate);
-        start.setDate(start.getDate() - start.getDay());
+        start.setDate(currentDate.getDate() - diff);
       }
-      start.setHours(0, 0, 0, 0);
+      start = new Date(
+        start.getFullYear(),
+        start.getMonth(),
+        start.getDate(),
+        0,
+        0,
+        0,
+        0,
+      );
       end = new Date(start);
       end.setDate(end.getDate() + 6);
       end.setHours(23, 59, 59, 999);
@@ -1423,38 +1466,53 @@ async function generateReportData(queryParams) {
     case "monthly":
       if (month) {
         const [yearPart, monthPart] = month.split("-");
-        start = new Date(parseInt(yearPart), parseInt(monthPart) - 1, 1);
+        start = new Date(
+          parseInt(yearPart),
+          parseInt(monthPart) - 1,
+          1,
+          0,
+          0,
+          0,
+          0,
+        );
       } else {
-        start = new Date();
-        start.setDate(1);
+        const now = new Date();
+        start = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
       }
-      start.setHours(0, 0, 0, 0);
-      end = new Date(start.getFullYear(), start.getMonth() + 1, 0);
-      end.setHours(23, 59, 59, 999);
+      end = new Date(
+        start.getFullYear(),
+        start.getMonth() + 1,
+        0,
+        23,
+        59,
+        59,
+        999,
+      );
       break;
 
     case "yearly":
       const reportYear = year ? parseInt(year) : new Date().getFullYear();
-      start = new Date(reportYear, 0, 1);
-      start.setHours(0, 0, 0, 0);
-      end = new Date(reportYear, 11, 31);
-      end.setHours(23, 59, 59, 999);
+      start = new Date(reportYear, 0, 1, 0, 0, 0, 0);
+      end = new Date(reportYear, 11, 31, 23, 59, 59, 999);
       break;
 
     case "custom":
       if (!startDate || !endDate) {
         throw new Error("startDate and endDate are required for custom period");
       }
-      start = new Date(startDate);
-      start.setHours(0, 0, 0, 0);
-      end = new Date(endDate);
-      end.setHours(23, 59, 59, 999);
+      start = getStartOfDay(startDate);
+      end = getEndOfDay(endDate);
       break;
 
     default:
       throw new Error(
         "Invalid period. Use: daily, weekly, monthly, yearly, custom",
       );
+  }
+
+  // Validate date range
+  if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+    throw new Error("Invalid date format");
   }
 
   // Fetch billings within date range
