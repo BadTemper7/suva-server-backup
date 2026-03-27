@@ -1,3 +1,4 @@
+// models/Room.js
 import mongoose from "mongoose";
 
 const roomSchema = new mongoose.Schema(
@@ -35,6 +36,13 @@ const roomSchema = new mongoose.Schema(
       type: Number,
       required: true,
       min: 0,
+    },
+
+    // Add description field
+    description: {
+      type: String,
+      trim: true,
+      default: "",
     },
 
     status: {

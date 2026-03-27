@@ -5,7 +5,15 @@ import { createNotification } from "../models/Notification.js";
 /* -------------------- CREATE ROOM -------------------- */
 export const createRoom = async (req, res) => {
   try {
-    const { roomNumber, roomType, capacity, rate, status, category } = req.body;
+    const {
+      roomNumber,
+      roomType,
+      capacity,
+      rate,
+      status,
+      category,
+      description, // Add description
+    } = req.body;
 
     if (!roomNumber || !capacity || !rate || !status || !category) {
       return res.status(400).json({
@@ -47,6 +55,7 @@ export const createRoom = async (req, res) => {
       status,
       category: category || "room",
       images: uploadedImages,
+      description: description || "", // Add description
     };
 
     // Only add roomType if category is "room" and it's provided
@@ -63,7 +72,7 @@ export const createRoom = async (req, res) => {
       actorUserId: req.user?._id || null,
       type: "maintenance",
       title: `${category === "cottage" ? "Cottage" : "Room"} Created`,
-      description: `${category === "cottage" ? "Cottage" : "Room"} ${room.roomNumber} was created. Capacity: ${room.capacity}, Rate: ${room.rate}, Status: ${room.status}.`,
+      description: `${category === "cottage" ? "Cottage" : "Room"} ${room.roomNumber} was created. Capacity: ${room.capacity}, Rate: ${room.rate}, Status: ${room.status}.${room.description ? ` Description: ${room.description}` : ""}`,
       source: "Maintenance",
       entity: { kind: "Room", id: room._id },
     });
@@ -99,10 +108,19 @@ export const updateRoom = async (req, res) => {
       rate: room.rate,
       status: room.status,
       category: room.category,
+      description: room.description || "",
       imagesCount: Array.isArray(room.images) ? room.images.length : 0,
     };
 
-    const { roomNumber, roomType, capacity, rate, status, category } = req.body;
+    const {
+      roomNumber,
+      roomType,
+      capacity,
+      rate,
+      status,
+      category,
+      description, // Add description
+    } = req.body;
 
     // Validate category if it's being updated
     if (category && category === "room" && !roomType && !room.roomType) {
@@ -145,6 +163,7 @@ export const updateRoom = async (req, res) => {
     room.rate = rate ?? room.rate;
     room.status = status ?? room.status;
     room.category = category ?? room.category;
+    room.description = description ?? room.description; // Add description update
 
     // Only update roomType if category is "room" and it's provided
     if (room.category === "room") {
@@ -166,6 +185,7 @@ export const updateRoom = async (req, res) => {
       rate: room.rate,
       status: room.status,
       category: room.category,
+      description: room.description || "",
       imagesCount: Array.isArray(room.images) ? room.images.length : 0,
     };
 
@@ -190,6 +210,9 @@ export const updateRoom = async (req, res) => {
     }
     if (String(before.category) !== String(after.category)) {
       changes.push(`category: ${before.category} → ${after.category}`);
+    }
+    if (String(before.description) !== String(after.description)) {
+      changes.push(`description updated`);
     }
     if (before.imagesCount !== after.imagesCount) {
       changes.push(`images: ${before.imagesCount} → ${after.imagesCount}`);
@@ -223,7 +246,6 @@ export const updateRoom = async (req, res) => {
     });
   }
 };
-
 /* -------------------- GET ROOMS -------------------- */
 export const getRooms = async (req, res) => {
   try {
