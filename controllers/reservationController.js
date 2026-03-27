@@ -94,6 +94,7 @@ export const checkAvailableRooms = async (req, res) => {
     // 3️⃣ Get all rooms that are not booked and populate roomType
     const availableRooms = await Room.find({
       _id: { $nin: bookedRoomIds },
+      status: "active",
     }).populate("roomType");
 
     return res.status(200).json({
