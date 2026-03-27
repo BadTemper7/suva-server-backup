@@ -62,7 +62,8 @@ async function ensureSuperAdmin() {
     console.log("✅ Superadmin created!");
   }
 }
-
+process.env.TZ = "Asia/Manila";
+console.log("Server Timezone:", new Date().toString());
 async function startServer() {
   await connectDB();
   console.log("✅ Database connected");
