@@ -72,9 +72,6 @@ async function startServer() {
 
   await ensureSuperAdmin(); // ✅ called after DB is connected
 
-  // Start self-ping cron (keeps server awake)
-  startSelfPingCron();
-
   // Initialize all scheduled jobs
   initScheduler();
   console.log("✅ Job scheduler initialized");
@@ -115,19 +112,19 @@ async function startServer() {
   app.use("/api/messages", messageRoutes);
 
   // Health check endpoint
-  app.get("/health", (req, res) => {
-    res.status(200).json({
-      status: "healthy",
-      timestamp: new Date().toISOString(),
-      uptime: process.uptime(),
-      jobs: {
-        expiredReservations: "running every 2 hours",
-        expiredReceipts: "running every 6 hours",
-        autoUnlockAccounts: "running every 30 minutes",
-        selfPing: "running every 10 minutes",
-      },
-    });
-  });
+  // app.get("/health", (req, res) => {
+  //   res.status(200).json({
+  //     status: "healthy",
+  //     timestamp: new Date().toISOString(),
+  //     uptime: process.uptime(),
+  //     jobs: {
+  //       expiredReservations: "running every 2 hours",
+  //       expiredReceipts: "running every 6 hours",
+  //       autoUnlockAccounts: "running every 30 minutes",
+  //       selfPing: "running every 10 minutes",
+  //     },
+  //   });
+  // });
 
   // Root endpoint
   app.get("/", (req, res) => {
@@ -194,42 +191,42 @@ async function startServer() {
   });
 }
 
-function startSelfPingCron() {
-  // Schedule self-ping every 10 minutes
-  cron.schedule("*/10 * * * *", async () => {
-    try {
-      const serverUrl = process.env.SERVER_URL || `http://localhost:${PORT}`;
-      const timestamp = new Date().toISOString();
+// function startSelfPingCron() {
+//   // Schedule self-ping every 10 minutes
+//   cron.schedule("*/10 * * * *", async () => {
+//     try {
+//       const serverUrl = process.env.SERVER_URL || `http://localhost:${PORT}`;
+//       const timestamp = new Date().toISOString();
 
-      console.log(`\n[${timestamp}] 🔄 Self-pinging server...`);
+//       console.log(`\n[${timestamp}] 🔄 Self-pinging server...`);
 
-      // Ping the health endpoint
-      const response = await fetch(`${serverUrl}/health`);
+//       // Ping the health endpoint
+//       const response = await fetch(`${serverUrl}/health`);
 
-      if (response.ok) {
-        const data = await response.json();
-        console.log(`✅ Server ping successful at ${timestamp}`);
-        console.log(`   - Uptime: ${Math.floor(data.uptime / 60)} minutes`);
-      } else {
-        console.log(`⚠️ Server ping returned status: ${response.status}`);
-      }
-    } catch (error) {
-      console.error("❌ Error during self-ping:", error.message);
+//       if (response.ok) {
+//         const data = await response.json();
+//         console.log(`✅ Server ping successful at ${timestamp}`);
+//         console.log(`   - Uptime: ${Math.floor(data.uptime / 60)} minutes`);
+//       } else {
+//         console.log(`⚠️ Server ping returned status: ${response.status}`);
+//       }
+//     } catch (error) {
+//       console.error("❌ Error during self-ping:", error.message);
 
-      // If the server is running locally, try to ping localhost
-      if (process.env.NODE_ENV !== "production") {
-        try {
-          const localResponse = await fetch(`http://localhost:${PORT}/health`);
-          console.log(`🔄 Local ping result: ${localResponse.status}`);
-        } catch (localError) {
-          console.error("❌ Local ping also failed:", localError.message);
-        }
-      }
-    }
-  });
+//       // If the server is running locally, try to ping localhost
+//       if (process.env.NODE_ENV !== "production") {
+//         try {
+//           const localResponse = await fetch(`http://localhost:${PORT}/health`);
+//           console.log(`🔄 Local ping result: ${localResponse.status}`);
+//         } catch (localError) {
+//           console.error("❌ Local ping also failed:", localError.message);
+//         }
+//       }
+//     }
+//   });
 
-  console.log("✅ Self-ping cron job scheduled (every 10 minutes)");
-}
+//   console.log("✅ Self-ping cron job scheduled (every 10 minutes)");
+// }
 
 // Handle graceful shutdown
 process.on("SIGTERM", () => {
