@@ -11,7 +11,15 @@ import PDFDocument from "pdfkit";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
-
+// Add this helper function at the top of the file
+const formatMoney = (amount) => {
+  return new Intl.NumberFormat("en-PH", {
+    style: "currency",
+    currency: "PHP",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(amount || 0);
+};
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const { Reservation, ReservationRoom } = ReservationModels;
@@ -209,6 +217,7 @@ export const getBillings = async (req, res) => {
 };
 
 // Update billing calculation
+// Update billing calculation
 export const updateBillingCalc = async (req, res) => {
   try {
     const { billingId } = req.params;
@@ -220,6 +229,18 @@ export const updateBillingCalc = async (req, res) => {
     const billing = await Billing.findById(billingId);
     if (!billing) {
       return res.status(404).json({ message: "Billing not found" });
+    }
+
+    // If billing is already refunded, don't update calculations
+    if (billing.status === "refunded") {
+      return res.status(200).json({
+        success: true,
+        billing: {
+          status: billing.status,
+          isRefundable: false,
+          message: "Billing is already refunded",
+        },
+      });
     }
 
     const reservation = await Reservation.findById(billing.reservationId);
@@ -321,21 +342,33 @@ export const updateBillingCalc = async (req, res) => {
         ? totalAmount
         : totalAmount * (paymentOption.amount / 100);
 
-    // Billing status
+    // Billing status and refundable flag
     let status = "unpaid";
     let isRefundable = false;
 
-    if (amountPaid >= amountDueNow && paymentOption.paymentType === "full") {
-      status = "paid";
-      isRefundable = true;
-    } else if (
-      amountPaid >= amountDueNow &&
-      paymentOption.paymentType === "partial"
-    ) {
-      status = "partial";
-      isRefundable = true;
+    if (amountPaid > 0) {
+      if (paymentOption.paymentType === "full") {
+        if (amountPaid >= totalAmount) {
+          status = "paid";
+          isRefundable = true;
+        } else {
+          status = "partial";
+          // Even if not fully paid, still refundable if they paid something
+          isRefundable = true;
+        }
+      } else if (paymentOption.paymentType === "partial") {
+        if (amountPaid >= amountDueNow) {
+          status = "partial";
+          isRefundable = true;
+        } else if (amountPaid > 0 && amountPaid < amountDueNow) {
+          status = "partial";
+          // Still refundable if they paid something
+          isRefundable = true;
+        }
+      }
     } else {
       status = "unpaid";
+      isRefundable = false;
     }
 
     const refundAmount = amountPaid * 0.5;
@@ -368,6 +401,7 @@ export const updateBillingCalc = async (req, res) => {
       },
     });
   } catch (error) {
+    console.error("Update billing calc error:", error);
     return res.status(500).json({ error: error.message });
   }
 };
@@ -1419,3 +1453,80 @@ async function generateReportData(queryParams) {
     },
   };
 }
+export const processRefund = async (req, res) => {
+  try {
+    const { billingId } = req.params;
+    const { refundAmount, reason } = req.body;
+
+    if (!billingId) {
+      return res.status(400).json({ error: "Billing ID is required" });
+    }
+
+    const billing = await Billing.findById(billingId)
+      .populate("reservationId")
+      .populate("receipts");
+
+    if (!billing) {
+      return res.status(404).json({ error: "Billing not found" });
+    }
+
+    // Check if billing is already refunded
+    if (billing.status === "refunded") {
+      return res
+        .status(400)
+        .json({ error: "This billing has already been refunded" });
+    }
+
+    // Check if there's any payment to refund
+    if (billing.amountPaid <= 0) {
+      return res
+        .status(400)
+        .json({ error: "No payment has been made to refund" });
+    }
+
+    // Calculate refund amount (50% of amount paid)
+    const calculatedRefundAmount = refundAmount || billing.amountPaid * 0.5;
+
+    if (calculatedRefundAmount > billing.amountPaid) {
+      return res
+        .status(400)
+        .json({ error: "Refund amount cannot exceed amount paid" });
+    }
+
+    // Store the refund amount before updating
+    const refundedAmount = calculatedRefundAmount;
+    const previousAmountPaid = billing.amountPaid;
+
+    // Update billing status to refunded
+    billing.status = "refunded";
+    billing.refundAmount = refundedAmount;
+    billing.refundedAt = new Date();
+    billing.refundReason = reason || "Refund processed by admin";
+
+    // Update amount paid and balance
+    const newAmountPaid = previousAmountPaid - refundedAmount;
+    billing.amountPaid = Math.max(0, newAmountPaid);
+    billing.balance = billing.totalAmount - billing.amountPaid;
+
+    // Set isRefundable to false since it's now refunded
+    billing.isRefundable = false;
+
+    await billing.save();
+
+    return res.status(200).json({
+      success: true,
+      message: `Refund of ${formatMoney(refundedAmount)} processed successfully`,
+      refund: {
+        amount: refundedAmount,
+        refundedAt: billing.refundedAt,
+        previousAmountPaid,
+        remainingBalance: billing.balance,
+        amountPaid: billing.amountPaid,
+      },
+      billing,
+    });
+  } catch (error) {
+    console.error("Refund processing error:", error);
+    return res.status(500).json({ error: error.message });
+  }
+};

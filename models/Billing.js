@@ -48,8 +48,12 @@ billingSchema.virtual("receipts", {
   justOne: false,
 });
 
-// Pre-save hook to update balance and status
 billingSchema.pre("save", function (next) {
+  // If status is already refunded, don't change it
+  if (this.status === "refunded") {
+    return next();
+  }
+
   this.totalAmount = Number(this.totalAmount || 0);
   this.amountPaid = Number(this.amountPaid || 0);
 
@@ -64,7 +68,6 @@ billingSchema.pre("save", function (next) {
 
   next();
 });
-
 // Generate billing number
 billingSchema.statics.generateBillingNumber = async function () {
   const currentYear = new Date().getFullYear();
