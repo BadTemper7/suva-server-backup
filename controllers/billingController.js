@@ -438,25 +438,28 @@ export const generateBillingReport = async (req, res) => {
 
     let start, end;
 
-    // Helper function to get start of day in local timezone
-    const getStartOfDay = (dateStr) => {
-      const d = new Date(dateStr);
-      // Create a new date with local time set to start of day
-      return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
+    // Helper function to parse date string and return Date object with local timezone
+    const parseLocalDate = (dateStr) => {
+      // Handle format like "2026-03-28"
+      const [year, month, day] = dateStr.split("-");
+      // Create date in local timezone (Philippine Time)
+      return new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
     };
 
-    // Helper function to get end of day in local timezone
+    // Helper function to get start of day in local timezone (UTC+8)
+    const getStartOfDay = (dateStr) => {
+      const d = parseLocalDate(dateStr);
+      // Return date with local time at 00:00:00
+      // This will convert to UTC automatically when saved to MongoDB
+      return d;
+    };
+
+    // Helper function to get end of day in local timezone (UTC+8)
     const getEndOfDay = (dateStr) => {
-      const d = new Date(dateStr);
-      return new Date(
-        d.getFullYear(),
-        d.getMonth(),
-        d.getDate(),
-        23,
-        59,
-        59,
-        999,
-      );
+      const d = parseLocalDate(dateStr);
+      // Set to end of day local time
+      d.setHours(23, 59, 59, 999);
+      return d;
     };
 
     // Calculate date range based on period
@@ -467,33 +470,17 @@ export const generateBillingReport = async (req, res) => {
           end = getEndOfDay(date);
         } else {
           const now = new Date();
-          start = new Date(
-            now.getFullYear(),
-            now.getMonth(),
-            now.getDate(),
-            0,
-            0,
-            0,
-            0,
-          );
-          end = new Date(
-            now.getFullYear(),
-            now.getMonth(),
-            now.getDate(),
-            23,
-            59,
-            59,
-            999,
-          );
+          const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+          start = getStartOfDay(todayStr);
+          end = getEndOfDay(todayStr);
         }
         break;
 
       case "weekly":
-        const currentDate = new Date();
         if (week && year) {
-          // Calculate start of week based on week number
-          const firstDayOfYear = new Date(year, 0, 1);
-          const daysOffset = (week - 1) * 7;
+          // Calculate start of week
+          const firstDayOfYear = new Date(parseInt(year), 0, 1);
+          const daysOffset = (parseInt(week) - 1) * 7;
           start = new Date(firstDayOfYear);
           start.setDate(firstDayOfYear.getDate() + daysOffset);
           // Adjust to start of week (Monday)
@@ -519,15 +506,7 @@ export const generateBillingReport = async (req, res) => {
         );
         end = new Date(start);
         end.setDate(end.getDate() + 6);
-        end = new Date(
-          end.getFullYear(),
-          end.getMonth(),
-          end.getDate(),
-          23,
-          59,
-          59,
-          999,
-        );
+        end.setHours(23, 59, 59, 999);
         break;
 
       case "monthly":
@@ -594,11 +573,11 @@ export const generateBillingReport = async (req, res) => {
       startDate,
       endDate,
     });
-    console.log("Calculated date range:", {
-      start: start.toISOString(),
-      end: end.toISOString(),
-      startLocal: start.toLocaleString(),
-      endLocal: end.toLocaleString(),
+    console.log("Calculated date range (Local):", {
+      start: start.toLocaleString("en-PH", { timeZone: "Asia/Manila" }),
+      end: end.toLocaleString("en-PH", { timeZone: "Asia/Manila" }),
+      startUTC: start.toISOString(),
+      endUTC: end.toISOString(),
     });
 
     // Fetch billings within date range
@@ -792,7 +771,92 @@ function getPeriodBreakdown(billings, period, start, end) {
       }
       break;
 
-    // ... rest of the cases remain the same
+    case "weekly":
+    case "custom":
+      // Daily breakdown
+      const days = Math.ceil((end - start) / (1000 * 60 * 60 * 24));
+      for (let i = 0; i <= days; i++) {
+        const day = new Date(start);
+        day.setDate(day.getDate() + i);
+        const dayStart = new Date(day);
+        dayStart.setHours(0, 0, 0, 0);
+        const dayEnd = new Date(day);
+        dayEnd.setHours(23, 59, 59, 999);
+
+        const dayBillings = billings.filter(
+          (bill) => bill.createdAt >= dayStart && bill.createdAt <= dayEnd,
+        );
+
+        breakdown.labels.push(
+          day.toLocaleDateString("en-PH", { weekday: "short", day: "numeric" }),
+        );
+        breakdown.revenue.push(
+          dayBillings.reduce((sum, bill) => sum + (bill.totalAmount || 0), 0),
+        );
+        breakdown.count.push(dayBillings.length);
+        breakdown.paid.push(
+          dayBillings.filter((bill) => bill.status === "paid").length,
+        );
+        breakdown.unpaid.push(
+          dayBillings.filter((bill) => bill.status === "unpaid").length,
+        );
+      }
+      break;
+
+    case "monthly":
+      // Weekly breakdown for monthly
+      const weeksInMonth = Math.ceil((end.getDate() - start.getDate() + 1) / 7);
+      for (let week = 1; week <= weeksInMonth; week++) {
+        const weekStart = new Date(start);
+        weekStart.setDate(start.getDate() + (week - 1) * 7);
+        const weekEnd = new Date(weekStart);
+        weekEnd.setDate(weekEnd.getDate() + 6);
+        weekEnd.setHours(23, 59, 59, 999);
+
+        const weekBillings = billings.filter(
+          (bill) => bill.createdAt >= weekStart && bill.createdAt <= weekEnd,
+        );
+
+        breakdown.labels.push(`Week ${week}`);
+        breakdown.revenue.push(
+          weekBillings.reduce((sum, bill) => sum + (bill.totalAmount || 0), 0),
+        );
+        breakdown.count.push(weekBillings.length);
+        breakdown.paid.push(
+          weekBillings.filter((bill) => bill.status === "paid").length,
+        );
+        breakdown.unpaid.push(
+          weekBillings.filter((bill) => bill.status === "unpaid").length,
+        );
+      }
+      break;
+
+    case "yearly":
+      // Monthly breakdown for yearly
+      for (let month = 0; month < 12; month++) {
+        const monthStart = new Date(start.getFullYear(), month, 1);
+        const monthEnd = new Date(start.getFullYear(), month + 1, 0);
+        monthEnd.setHours(23, 59, 59, 999);
+
+        const monthBillings = billings.filter(
+          (bill) => bill.createdAt >= monthStart && bill.createdAt <= monthEnd,
+        );
+
+        breakdown.labels.push(
+          monthStart.toLocaleDateString("en-PH", { month: "short" }),
+        );
+        breakdown.revenue.push(
+          monthBillings.reduce((sum, bill) => sum + (bill.totalAmount || 0), 0),
+        );
+        breakdown.count.push(monthBillings.length);
+        breakdown.paid.push(
+          monthBillings.filter((bill) => bill.status === "paid").length,
+        );
+        breakdown.unpaid.push(
+          monthBillings.filter((bill) => bill.status === "unpaid").length,
+        );
+      }
+      break;
   }
 
   return breakdown;
