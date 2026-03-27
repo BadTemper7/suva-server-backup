@@ -438,108 +438,162 @@ export const generateBillingReport = async (req, res) => {
 
     let start, end;
 
-    // Helper function to parse date string and return Date object with local timezone
-    const parseLocalDate = (dateStr) => {
-      // Handle format like "2026-03-28"
+    // Helper function to convert Philippine date to UTC range
+    const getPHDateRange = (dateStr) => {
       const [year, month, day] = dateStr.split("-");
-      // Create date in local timezone (Philippine Time)
-      return new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
-    };
-
-    // Helper function to get start of day in local timezone (UTC+8)
-    const getStartOfDay = (dateStr) => {
-      const d = parseLocalDate(dateStr);
-      // Return date with local time at 00:00:00
-      // This will convert to UTC automatically when saved to MongoDB
-      return d;
-    };
-
-    // Helper function to get end of day in local timezone (UTC+8)
-    const getEndOfDay = (dateStr) => {
-      const d = parseLocalDate(dateStr);
-      // Set to end of day local time
-      d.setHours(23, 59, 59, 999);
-      return d;
+      // Philippine time 00:00:00 = UTC previous day 16:00:00
+      const startUTC = new Date(
+        Date.UTC(
+          parseInt(year),
+          parseInt(month) - 1,
+          parseInt(day),
+          16,
+          0,
+          0,
+          0,
+        ),
+      );
+      // Philippine time 23:59:59 = UTC same day 15:59:59
+      const endUTC = new Date(
+        Date.UTC(
+          parseInt(year),
+          parseInt(month) - 1,
+          parseInt(day) + 1,
+          15,
+          59,
+          59,
+          999,
+        ),
+      );
+      return { startUTC, endUTC };
     };
 
     // Calculate date range based on period
     switch (period) {
       case "daily":
         if (date) {
-          start = getStartOfDay(date);
-          end = getEndOfDay(date);
+          const { startUTC, endUTC } = getPHDateRange(date);
+          start = startUTC;
+          end = endUTC;
         } else {
+          // Get current Philippine date
           const now = new Date();
-          const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
-          start = getStartOfDay(todayStr);
-          end = getEndOfDay(todayStr);
+          const phNow = new Date(now.getTime() + 8 * 60 * 60 * 1000);
+          const phYear = phNow.getUTCFullYear();
+          const phMonth = phNow.getUTCMonth();
+          const phDay = phNow.getUTCDate();
+          const todayStr = `${phYear}-${String(phMonth + 1).padStart(2, "0")}-${String(phDay).padStart(2, "0")}`;
+          const { startUTC, endUTC } = getPHDateRange(todayStr);
+          start = startUTC;
+          end = endUTC;
         }
         break;
 
       case "weekly":
+        // Get current Philippine date for week calculation
+        const now = new Date();
+        const phNow = new Date(now.getTime() + 8 * 60 * 60 * 1000);
+        const phYear = phNow.getUTCFullYear();
+        const phMonth = phNow.getUTCMonth();
+        const phDay = phNow.getUTCDate();
+
+        let weekStart, weekEnd;
+
         if (week && year) {
-          // Calculate start of week
-          const firstDayOfYear = new Date(parseInt(year), 0, 1);
+          // Calculate start of week based on week number in Philippine time
+          const firstDayOfYear = new Date(Date.UTC(parseInt(year), 0, 1));
           const daysOffset = (parseInt(week) - 1) * 7;
-          start = new Date(firstDayOfYear);
-          start.setDate(firstDayOfYear.getDate() + daysOffset);
+          const weekStartPH = new Date(firstDayOfYear);
+          weekStartPH.setUTCDate(firstDayOfYear.getUTCDate() + daysOffset);
           // Adjust to start of week (Monday)
-          const dayOfWeek = start.getDay();
+          const dayOfWeek = weekStartPH.getUTCDay();
           const diff = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
-          start.setDate(start.getDate() - diff);
+          weekStartPH.setUTCDate(weekStartPH.getUTCDate() - diff);
+
+          const weekStartStr = `${weekStartPH.getUTCFullYear()}-${String(weekStartPH.getUTCMonth() + 1).padStart(2, "0")}-${String(weekStartPH.getUTCDate()).padStart(2, "0")}`;
+          const weekEndPH = new Date(weekStartPH);
+          weekEndPH.setUTCDate(weekStartPH.getUTCDate() + 6);
+          const weekEndStr = `${weekEndPH.getUTCFullYear()}-${String(weekEndPH.getUTCMonth() + 1).padStart(2, "0")}-${String(weekEndPH.getUTCDate()).padStart(2, "0")}`;
+
+          const { startUTC: startWeek } = getPHDateRange(weekStartStr);
+          const { endUTC: endWeek } = getPHDateRange(weekEndStr);
+          start = startWeek;
+          end = endWeek;
         } else {
-          // Current week - start from Monday
-          const now = new Date();
-          const day = now.getDay();
-          const diff = day === 0 ? 6 : day - 1;
-          start = new Date(now);
-          start.setDate(now.getDate() - diff);
+          // Current week
+          const todayPH = new Date(phYear, phMonth, phDay);
+          const dayOfWeek = todayPH.getDay();
+          const diff = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+          const weekStartPH = new Date(todayPH);
+          weekStartPH.setDate(todayPH.getDate() - diff);
+          const weekEndPH = new Date(weekStartPH);
+          weekEndPH.setDate(weekStartPH.getDate() + 6);
+
+          const weekStartStr = `${weekStartPH.getFullYear()}-${String(weekStartPH.getMonth() + 1).padStart(2, "0")}-${String(weekStartPH.getDate()).padStart(2, "0")}`;
+          const weekEndStr = `${weekEndPH.getFullYear()}-${String(weekEndPH.getMonth() + 1).padStart(2, "0")}-${String(weekEndPH.getDate()).padStart(2, "0")}`;
+
+          const { startUTC: startWeek } = getPHDateRange(weekStartStr);
+          const { endUTC: endWeek } = getPHDateRange(weekEndStr);
+          start = startWeek;
+          end = endWeek;
         }
-        start = new Date(
-          start.getFullYear(),
-          start.getMonth(),
-          start.getDate(),
-          0,
-          0,
-          0,
-          0,
-        );
-        end = new Date(start);
-        end.setDate(end.getDate() + 6);
-        end.setHours(23, 59, 59, 999);
         break;
 
       case "monthly":
         if (month) {
           const [yearPart, monthPart] = month.split("-");
-          start = new Date(
+          // Get first day of month in Philippine time
+          const firstDayPH = new Date(
             parseInt(yearPart),
             parseInt(monthPart) - 1,
             1,
-            0,
-            0,
-            0,
+          );
+          const lastDayPH = new Date(
+            parseInt(yearPart),
+            parseInt(monthPart),
             0,
           );
+
+          const firstDayStr = `${firstDayPH.getFullYear()}-${String(firstDayPH.getMonth() + 1).padStart(2, "0")}-${String(firstDayPH.getDate()).padStart(2, "0")}`;
+          const lastDayStr = `${lastDayPH.getFullYear()}-${String(lastDayPH.getMonth() + 1).padStart(2, "0")}-${String(lastDayPH.getDate()).padStart(2, "0")}`;
+
+          const { startUTC: startMonth } = getPHDateRange(firstDayStr);
+          const { endUTC: endMonth } = getPHDateRange(lastDayStr);
+          start = startMonth;
+          end = endMonth;
         } else {
+          // Current month
           const now = new Date();
-          start = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
+          const phNow = new Date(now.getTime() + 8 * 60 * 60 * 1000);
+          const firstDayPH = new Date(
+            phNow.getUTCFullYear(),
+            phNow.getUTCMonth(),
+            1,
+          );
+          const lastDayPH = new Date(
+            phNow.getUTCFullYear(),
+            phNow.getUTCMonth() + 1,
+            0,
+          );
+
+          const firstDayStr = `${firstDayPH.getFullYear()}-${String(firstDayPH.getMonth() + 1).padStart(2, "0")}-${String(firstDayPH.getDate()).padStart(2, "0")}`;
+          const lastDayStr = `${lastDayPH.getFullYear()}-${String(lastDayPH.getMonth() + 1).padStart(2, "0")}-${String(lastDayPH.getDate()).padStart(2, "0")}`;
+
+          const { startUTC: startMonth } = getPHDateRange(firstDayStr);
+          const { endUTC: endMonth } = getPHDateRange(lastDayStr);
+          start = startMonth;
+          end = endMonth;
         }
-        end = new Date(
-          start.getFullYear(),
-          start.getMonth() + 1,
-          0,
-          23,
-          59,
-          59,
-          999,
-        );
         break;
 
       case "yearly":
         const reportYear = year ? parseInt(year) : new Date().getFullYear();
-        start = new Date(reportYear, 0, 1, 0, 0, 0, 0);
-        end = new Date(reportYear, 11, 31, 23, 59, 59, 999);
+        const firstDayStr = `${reportYear}-01-01`;
+        const lastDayStr = `${reportYear}-12-31`;
+        const { startUTC: startYear } = getPHDateRange(firstDayStr);
+        const { endUTC: endYear } = getPHDateRange(lastDayStr);
+        start = startYear;
+        end = endYear;
         break;
 
       case "custom":
@@ -548,8 +602,10 @@ export const generateBillingReport = async (req, res) => {
             error: "startDate and endDate are required for custom period",
           });
         }
-        start = getStartOfDay(startDate);
-        end = getEndOfDay(endDate);
+        const { startUTC: startCustom } = getPHDateRange(startDate);
+        const { endUTC: endCustom } = getPHDateRange(endDate);
+        start = startCustom;
+        end = endCustom;
         break;
 
       default:
@@ -573,11 +629,15 @@ export const generateBillingReport = async (req, res) => {
       startDate,
       endDate,
     });
-    console.log("Calculated date range (Local):", {
-      start: start.toLocaleString("en-PH", { timeZone: "Asia/Manila" }),
-      end: end.toLocaleString("en-PH", { timeZone: "Asia/Manila" }),
-      startUTC: start.toISOString(),
-      endUTC: end.toISOString(),
+    console.log("Calculated date range (UTC):", {
+      start: start.toISOString(),
+      end: end.toISOString(),
+      startPH: new Date(start.getTime() + 8 * 60 * 60 * 1000)
+        .toISOString()
+        .replace("Z", ""),
+      endPH: new Date(end.getTime() + 8 * 60 * 60 * 1000)
+        .toISOString()
+        .replace("Z", ""),
     });
 
     // Fetch billings within date range
@@ -617,6 +677,10 @@ export const generateBillingReport = async (req, res) => {
     // Get top performing data
     const topData = getTopPerformers(billings);
 
+    // Format date range for display (in Philippine time)
+    const displayStart = new Date(start.getTime() + 8 * 60 * 60 * 1000);
+    const displayEnd = new Date(end.getTime() + 8 * 60 * 60 * 1000);
+
     return res.status(200).json({
       success: true,
       report: {
@@ -624,7 +688,7 @@ export const generateBillingReport = async (req, res) => {
         dateRange: {
           start: start.toISOString(),
           end: end.toISOString(),
-          display: formatDateRange(period, start, end),
+          display: formatDateRange(period, displayStart, displayEnd),
         },
         summary,
         breakdown,
