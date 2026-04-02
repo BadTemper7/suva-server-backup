@@ -256,6 +256,8 @@ export const addReservation = async (req, res) => {
     return res.status(500).json({ error: error.message });
   }
 };
+
+// --- UPDATE RESERVATION STATUS ---
 export const updateReservationStatus = async (req, res) => {
   const session = await mongoose.startSession();
   session.startTransaction();
@@ -366,6 +368,7 @@ export const updateReservationStatus = async (req, res) => {
   }
 };
 
+// --- UPDATE RESERVATION ---
 export const updateReservation = async (req, res) => {
   try {
     const { reservationId, checkIn, checkOut } = req.body;
@@ -395,6 +398,7 @@ export const updateReservation = async (req, res) => {
   }
 };
 
+// --- GET RESERVATIONS ---
 export const getReservations = async (req, res) => {
   try {
     const { status, startDate, endDate, guestName } = req.query;

@@ -47,7 +47,7 @@ const messageSchema = new Schema(
     guestId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Guest", // Reference to Guest model
-      index: true,
+      // index: true,
     },
     ipAddress: String,
     userAgent: String,

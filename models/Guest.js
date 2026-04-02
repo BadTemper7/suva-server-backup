@@ -27,8 +27,8 @@ const guestSchema = new Schema(
       maxlength: 120,
       match: [/^\S+@\S+\.\S+$/, "Invalid email address"],
       default: null,
-      index: true,
-      unique: true,
+      // index: true,
+      // unique: true,
     },
 
     // Optional password - for registered users who create an account
