@@ -95,8 +95,8 @@ const userSchema = new mongoose.Schema(
 );
 
 // Indexes for better performance
-userSchema.index({ email: 1 }, { unique: true });
-userSchema.index({ username: 1 }, { unique: true });
+// userSchema.index({ email: 1 }, { unique: true });
+// userSchema.index({ username: 1 }, { unique: true });
 userSchema.index({ status: 1 });
 userSchema.index({ role: 1 });
 

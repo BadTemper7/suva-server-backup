@@ -60,6 +60,8 @@ async function ensureSuperAdmin() {
       protected: true, // Cannot be deleted
     });
     console.log("✅ Superadmin created!");
+  } else {
+    console.log("✅ Superadmin already exists");
   }
 }
 process.env.TZ = "Asia/Manila";
