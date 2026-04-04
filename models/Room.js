@@ -30,7 +30,7 @@ const roomSchema = new mongoose.Schema(
     category: {
       type: String,
       enum: ["room", "cottage"],
-      default: ["room"],
+      default: "room",
     },
     rate: {
       type: Number,
@@ -47,8 +47,14 @@ const roomSchema = new mongoose.Schema(
 
     status: {
       type: String,
-      enum: ["active", "inactive", "maintenance", "clean", "to-clean"],
+      enum: ["active", "maintenance", "clean", "to-clean"],
       default: "active",
+    },
+
+    maintenanceReason: {
+      type: String,
+      trim: true,
+      default: "",
     },
   },
   { timestamps: true },
