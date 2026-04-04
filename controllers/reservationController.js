@@ -300,22 +300,25 @@ export const addReservation = async (req, res) => {
       reservation: fullReservation,
     });
 
-    // 🚀 ADD EMAIL TO QUEUE INSTEAD OF SENDING DIRECTLY
-    if (fullReservation.guestId && fullReservation.guestId.email) {
-      emailQueue.add({
-        reservation: fullReservation,
-        guest: fullReservation.guestId,
-        oldStatus: null,
-        newStatus: fullReservation.status,
-        retryCount: 0,
-      });
-      console.log(
-        `📧 Email queued for new reservation ${fullReservation.reservationNumber}`,
-      );
-    } else {
-      console.warn(
-        `⚠️ Cannot queue email: Missing guest email for reservation ${fullReservation.reservationNumber}`,
-      );
+    // Pending guest bookings add rooms + billing after this request; email is queued
+    // from billing calculation so the message includes rooms and payment data.
+    if (fullReservation.status !== "pending") {
+      if (fullReservation.guestId && fullReservation.guestId.email) {
+        emailQueue.add({
+          reservation: fullReservation,
+          guest: fullReservation.guestId,
+          oldStatus: null,
+          newStatus: fullReservation.status,
+          retryCount: 0,
+        });
+        console.log(
+          `📧 Email queued for new reservation ${fullReservation.reservationNumber}`,
+        );
+      } else {
+        console.warn(
+          `⚠️ Cannot queue email: Missing guest email for reservation ${fullReservation.reservationNumber}`,
+        );
+      }
     }
 
     return res.status(201).json({

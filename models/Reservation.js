@@ -81,6 +81,8 @@ const reservationSchema = new Schema(
     },
 
     userId: { type: Schema.Types.ObjectId, ref: "User" },
+
+    pendingConfirmationEmailSent: { type: Boolean, default: false },
   },
   { timestamps: true },
 );

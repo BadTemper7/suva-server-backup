@@ -1,7 +1,9 @@
 // controllers/billingController.js
 import Billing from "../models/Billing.js";
 import ReservationModels from "../models/Reservation.js";
+import Guest from "../models/Guest.js";
 import DiscountImg from "../models/DiscountImage.js";
+import { emailQueue } from "../utils/emailQueue.js";
 import mongoose from "mongoose";
 import Receipt from "../models/Receipt.js";
 import Discount from "../models/Discount.js";
@@ -385,6 +387,38 @@ export const updateBillingCalc = async (req, res) => {
     billing.refundAmount = refundAmount;
 
     await billing.save();
+
+    if (
+      reservation.status === "pending" &&
+      !reservation.pendingConfirmationEmailSent
+    ) {
+      const guest = await Guest.findById(reservation.guestId);
+      if (guest?.email) {
+        const reservationForEmail = await Reservation.findById(
+          reservation._id,
+        )
+          .populate("guestId")
+          .populate("paymentOption")
+          .populate("userId")
+          .populate("discountId");
+        if (reservationForEmail) {
+          emailQueue.add({
+            reservation: reservationForEmail,
+            guest,
+            oldStatus: null,
+            newStatus: "pending",
+            retryCount: 0,
+          });
+          await Reservation.updateOne(
+            { _id: reservation._id },
+            { $set: { pendingConfirmationEmailSent: true } },
+          );
+          console.log(
+            `📧 Pending confirmation email queued after billing calc for ${reservation.reservationNumber}`,
+          );
+        }
+      }
+    }
 
     return res.status(200).json({
       success: true,

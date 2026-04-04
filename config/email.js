@@ -1,8 +1,64 @@
 // config/email.js
 import nodemailer from "nodemailer";
 import dotenv from "dotenv";
+import {
+  bookingPolicySummaryIntro,
+  resortGuestSummary,
+  roomPolicySummary,
+} from "./bookingPolicySummaryData.js";
+import Billing from "../models/Billing.js";
+import Receipt from "../models/Receipt.js";
+import ReservationModels from "../models/Reservation.js";
+
+const { Reservation: ReservationModel, ReservationRoom } = ReservationModels;
 
 dotenv.config();
+
+function escapeEmailHtml(s) {
+  if (s == null || s === "") return "—";
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function formatPhp(amount) {
+  return new Intl.NumberFormat("en-PH", {
+    style: "currency",
+    currency: "PHP",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(Number(amount) || 0);
+}
+
+function buildBookingPolicySummaryEmailBlock(frontendUrl) {
+  const base = String(frontendUrl || process.env.FRONTEND_URL || "").replace(
+    /\/$/,
+    "",
+  );
+  const policyUrl = `${base}/booking-policy-summary`;
+  const itemsToLi = (items) =>
+    items
+      .map(
+        (t) =>
+          `<li style="margin:0 0 8px 0;padding-left:4px;color:#475569;font-size:14px;line-height:1.5;">${t.replace(/&/g, "&amp;").replace(/</g, "&lt;")}</li>`,
+      )
+      .join("");
+  return `
+    <div style="background:#f8fafc;border-radius:16px;padding:22px 20px;margin:28px 0;border:1px solid #e2e8f0;">
+      <h3 style="color:#78350f;margin:0 0 8px 0;font-size:17px;">Policies at a glance</h3>
+      <p style="color:#64748b;font-size:14px;margin:0 0 16px 0;line-height:1.5;">${bookingPolicySummaryIntro.replace(/&/g, "&amp;").replace(/</g, "&lt;")}</p>
+      <p style="color:#78350f;font-weight:600;font-size:14px;margin:0 0 10px 0;">${resortGuestSummary.title.replace(/&/g, "&amp;")}</p>
+      <ul style="margin:0 0 20px 0;padding-left:18px;list-style-type:disc;">${itemsToLi(resortGuestSummary.items)}</ul>
+      <p style="color:#78350f;font-weight:600;font-size:14px;margin:0 0 10px 0;">${roomPolicySummary.title.replace(/&/g, "&amp;")}</p>
+      <ul style="margin:0 0 18px 0;padding-left:18px;list-style-type:disc;">${itemsToLi(roomPolicySummary.items)}</ul>
+      <p style="margin:0;text-align:center;">
+        <a href="${policyUrl.replace(/"/g, "&quot;")}" style="display:inline-block;color:#0369a1;font-weight:600;font-size:14px;text-decoration:underline;">Open full summary on our website →</a>
+      </p>
+    </div>
+  `;
+}
 
 // Create transporter with proper SSL/TLS configuration
 const createTransporter = () => {
@@ -1134,6 +1190,12 @@ export const sendReservationStatusEmail = async (
 
   const template = statusTemplates[newStatus] || statusTemplates.pending;
 
+  const frontendBase = process.env.FRONTEND_URL || "";
+  const policySummaryEmailBlock =
+    newStatus === "pending" || newStatus === "confirmed"
+      ? buildBookingPolicySummaryEmailBlock(frontendBase)
+      : "";
+
   const checkInDate = new Date(reservation.checkIn).toLocaleDateString(
     "en-PH",
     {
@@ -1153,6 +1215,156 @@ export const sendReservationStatusEmail = async (
       day: "numeric",
     },
   );
+
+  const checkInDateTime = new Date(reservation.checkIn).toLocaleString(
+    "en-PH",
+    {
+      weekday: "long",
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true,
+    },
+  );
+
+  const checkOutDateTime = new Date(reservation.checkOut).toLocaleString(
+    "en-PH",
+    {
+      weekday: "long",
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true,
+    },
+  );
+
+  const rid = reservation._id;
+  let resPopulated = reservation;
+  if (
+    rid &&
+    (!reservation.paymentOption ||
+      typeof reservation.paymentOption !== "object" ||
+      !("name" in reservation.paymentOption))
+  ) {
+    resPopulated =
+      (await ReservationModel.findById(rid).populate("paymentOption")) ||
+      reservation;
+  }
+  const po = resPopulated?.paymentOption;
+
+  let paymentTypeLabel = "—";
+  if (po?.paymentType === "full") paymentTypeLabel = "Full payment";
+  else if (po?.paymentType === "partial" && po.amount != null)
+    paymentTypeLabel = `Partial (${po.amount}% per plan)`;
+  else if (po?.paymentType === "partial") paymentTypeLabel = "Partial payment";
+
+  const billing = rid ? await Billing.findOne({ reservationId: rid }) : null;
+  let amountPaidNumeric = 0;
+  if (billing?._id) {
+    amountPaidNumeric = Number(billing.amountPaid) || 0;
+    const receipts = await Receipt.find({ billingId: billing._id });
+    const fromReceipts = receipts.reduce(
+      (sum, r) =>
+        r.status === "rejected"
+          ? sum
+          : sum + (Number(r.amountPaid) || 0),
+      0,
+    );
+    amountPaidNumeric = Math.max(amountPaidNumeric, fromReceipts);
+  }
+
+  const amountPaidHtml = billing
+    ? escapeEmailHtml(formatPhp(amountPaidNumeric))
+    : escapeEmailHtml(
+        "Not recorded yet — it will appear after your payment is posted (see My Bookings).",
+      );
+
+  const adults = Number(reservation.adults ?? 0);
+  const children = Number(reservation.children ?? 0);
+  const totalPax = adults + children;
+
+  let pendingRoomsBlock = "";
+  if (newStatus === "pending" && rid) {
+    const resRooms = await ReservationRoom.find({ reservationId: rid })
+      .populate({
+        path: "roomId",
+        populate: { path: "roomType" },
+      })
+      .populate("addOns.addOnId");
+
+    if (resRooms.length === 0) {
+      pendingRoomsBlock = `<p style="margin-top:12px;"><strong>Rooms / cottages:</strong> ${escapeEmailHtml("Not listed yet — open My Bookings for the latest list.")}</p>`;
+    } else {
+      const lis = [];
+      for (const rr of resRooms) {
+        const room = rr.roomId;
+        if (!room) continue;
+        const label = room.category === "cottage" ? "Cottage" : "Room";
+        const typePart = room.roomType?.name
+          ? ` (${escapeEmailHtml(room.roomType.name)})`
+          : "";
+        let line = `${label} ${escapeEmailHtml(String(room.roomNumber))}${typePart}`;
+        if (rr.addOns?.length) {
+          const addOnParts = rr.addOns.map((a) => {
+            const n = a.addOnId?.name || "Add-on";
+            return `${escapeEmailHtml(n)} × ${a.quantity}`;
+          });
+          line += ` — ${addOnParts.join(", ")}`;
+        }
+        lis.push(`<li style="margin:4px 0;color:#6b4c2c;">${line}</li>`);
+      }
+      pendingRoomsBlock =
+        lis.length > 0
+          ? `<p style="margin-top:12px;"><strong>Rooms / cottages:</strong></p><ul style="margin:6px 0 0 0;padding-left:20px;">${lis.join("")}</ul>`
+          : `<p style="margin-top:12px;"><strong>Rooms / cottages:</strong> ${escapeEmailHtml("Not listed yet — open My Bookings for the latest list.")}</p>`;
+    }
+  }
+
+  let reservationDetailsInner;
+  if (newStatus === "pending") {
+    reservationDetailsInner = `
+            <p><strong>Reservation Number:</strong> ${escapeEmailHtml(reservation.reservationNumber)}</p>
+            <p><strong>Check-in:</strong> ${escapeEmailHtml(checkInDate)}</p>
+            <p><strong>Check-out:</strong> ${escapeEmailHtml(checkOutDate)}</p>
+            <p><strong>Nights:</strong> ${escapeEmailHtml(String(reservation.nights ?? ""))}</p>
+            <p><strong>Guests:</strong> ${adults} adult(s), ${children} child(ren) (${totalPax} total)</p>
+            ${pendingRoomsBlock}
+            <p><strong>Payment plan:</strong> ${escapeEmailHtml(po?.name)}</p>
+            <p><strong>Payment type:</strong> ${escapeEmailHtml(paymentTypeLabel)}</p>
+            <p><strong>Amount paid:</strong> ${amountPaidHtml}</p>`;
+  } else if (newStatus === "confirmed") {
+    reservationDetailsInner = `
+            <p><strong>Reservation Number:</strong> ${escapeEmailHtml(reservation.reservationNumber)}</p>
+            <p><strong>Check-in:</strong> ${escapeEmailHtml(checkInDateTime)}</p>
+            <p><strong>Check-out:</strong> ${escapeEmailHtml(checkOutDateTime)}</p>
+            <p><strong>Nights:</strong> ${escapeEmailHtml(String(reservation.nights ?? ""))}</p>
+            <p><strong>Guests:</strong> ${adults} adult(s), ${children} child(ren) (${totalPax} total)</p>`;
+  } else {
+    reservationDetailsInner = `
+            <p><strong>Reservation Number:</strong> ${escapeEmailHtml(reservation.reservationNumber)}</p>
+            <p><strong>Check-in:</strong> ${escapeEmailHtml(checkInDate)}</p>
+            <p><strong>Check-out:</strong> ${escapeEmailHtml(checkOutDate)}</p>
+            <p><strong>Nights:</strong> ${escapeEmailHtml(String(reservation.nights ?? ""))}</p>`;
+  }
+
+  const confirmedArrivalReminderBlock =
+    newStatus === "confirmed"
+      ? `
+          <div style="background:#ecfdf5;border-radius:16px;padding:18px 20px;margin:0 0 24px 0;border:1px solid #a7f3d0;">
+            <p style="color:#065f46;font-weight:700;margin:0 0 10px 0;font-size:15px;">Reminder: grace period &amp; security deposit</p>
+            <p style="color:#047857;font-size:14px;margin:0 0 10px 0;line-height:1.55;">
+              At check-in, please present a <strong>valid government ID</strong> and pay a <strong>cash security deposit</strong>:
+              <strong>₱500</strong> for Cuarto &amp; Teodora, or <strong>₱1,000</strong> for Casa. The deposit is returned at checkout if there is no damage.
+            </p>
+            <p style="color:#047857;font-size:14px;margin:0;line-height:1.55;">
+              <strong>Grace period:</strong> Aim to arrive at your scheduled check-in time. If you will be late, please contact us. A <strong>2-hour grace period</strong> applies after <strong>2:00 PM</strong> on your check-in date; arrivals beyond that without notice may be treated as a no-show under resort policy.
+            </p>
+          </div>`
+      : "";
 
   const html = `
     <!DOCTYPE html>
@@ -1249,14 +1461,15 @@ export const sendReservationStatusEmail = async (
           
           <div class="reservation-details">
             <h3 style="color: #78350f; margin-bottom: 15px;">📋 Reservation Details</h3>
-            <p><strong>Reservation Number:</strong> ${reservation.reservationNumber}</p>
-            <p><strong>Check-in:</strong> ${checkInDate}</p>
-            <p><strong>Check-out:</strong> ${checkOutDate}</p>
-            <p><strong>Nights:</strong> ${reservation.nights}</p>
+            ${reservationDetailsInner}
           </div>
           
+          ${confirmedArrivalReminderBlock}
+          
+          ${policySummaryEmailBlock}
+          
           <div style="text-align: center;">
-            <a href="${process.env.FRONTEND_URL}/bookings" class="button">
+            <a href="${frontendBase}/bookings" class="button">
               View Reservation →
             </a>
           </div>
