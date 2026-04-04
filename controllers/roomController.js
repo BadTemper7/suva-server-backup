@@ -2,6 +2,27 @@ import Room from "../models/Room.js";
 import cloudinary from "../config/cloudinary.js";
 import { createNotification } from "../models/Notification.js";
 
+const ALLOWED_ROOM_STATUSES = ["active", "maintenance", "clean", "to-clean"];
+
+function validateRoomStatus(status) {
+  if (!status || status === "inactive" || !ALLOWED_ROOM_STATUSES.includes(status)) {
+    return "Invalid status";
+  }
+  return null;
+}
+
+function parsePositiveIntCapacity(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || !Number.isInteger(n) || n < 1) return null;
+  return n;
+}
+
+function parseNonNegativeRate(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0) return null;
+  return n;
+}
+
 /* -------------------- CREATE ROOM -------------------- */
 export const createRoom = async (req, res) => {
   try {
@@ -12,21 +33,53 @@ export const createRoom = async (req, res) => {
       rate,
       status,
       category,
-      description, // Add description
+      description,
+      maintenanceReason,
     } = req.body;
 
-    if (!roomNumber || !capacity || !rate || !status || !category) {
-      return res.status(400).json({
-        message:
-          "Room number, capacity, rate, status, and category are required",
-      });
+    const stErr = validateRoomStatus(status);
+    if (stErr) {
+      return res.status(400).json({ message: stErr });
     }
 
-    // Only validate roomType if category is "room"
+    if (!roomNumber || !String(roomNumber).trim()) {
+      return res.status(400).json({ message: "Room number is required" });
+    }
+
+    if (!category || !["room", "cottage"].includes(category)) {
+      return res.status(400).json({ message: "Valid category is required" });
+    }
+
+    const cap = parsePositiveIntCapacity(capacity);
+    if (cap === null) {
+      return res.status(400).json({ message: "Capacity must be a positive integer" });
+    }
+
+    const rt = parseNonNegativeRate(rate);
+    if (rt === null) {
+      return res.status(400).json({ message: "Rate must be a non-negative number" });
+    }
+
+    const desc = String(description ?? "").trim();
+    if (!desc) {
+      return res.status(400).json({ message: "Description is required" });
+    }
+
     if (category === "room" && !roomType) {
       return res.status(400).json({
         message: "Room type is required for rooms",
       });
+    }
+
+    let mr = String(maintenanceReason ?? "").trim();
+    if (status === "maintenance") {
+      if (!mr) {
+        return res.status(400).json({
+          message: "Maintenance reason is required when status is maintenance",
+        });
+      }
+    } else {
+      mr = "";
     }
 
     if (!req.files || req.files.length === 0) {
@@ -49,13 +102,14 @@ export const createRoom = async (req, res) => {
 
     // Prepare room data
     const roomData = {
-      roomNumber,
-      capacity,
-      rate,
+      roomNumber: String(roomNumber).trim(),
+      capacity: cap,
+      rate: rt,
       status,
       category: category || "room",
       images: uploadedImages,
-      description: description || "", // Add description
+      description: desc,
+      maintenanceReason: mr,
     };
 
     // Only add roomType if category is "room" and it's provided
@@ -72,7 +126,7 @@ export const createRoom = async (req, res) => {
       actorUserId: req.user?._id || null,
       type: "maintenance",
       title: `${category === "cottage" ? "Cottage" : "Room"} Created`,
-      description: `${category === "cottage" ? "Cottage" : "Room"} ${room.roomNumber} was created. Capacity: ${room.capacity}, Rate: ${room.rate}, Status: ${room.status}.${room.description ? ` Description: ${room.description}` : ""}`,
+      description: `${category === "cottage" ? "Cottage" : "Room"} ${room.roomNumber} was created. Capacity: ${room.capacity}, Rate: ${room.rate}, Status: ${room.status}.${room.description ? ` Description: ${room.description}` : ""}${room.status === "maintenance" && room.maintenanceReason ? ` Reason: ${room.maintenanceReason}` : ""}`,
       source: "Maintenance",
       entity: { kind: "Room", id: room._id },
     });
@@ -109,6 +163,7 @@ export const updateRoom = async (req, res) => {
       status: room.status,
       category: room.category,
       description: room.description || "",
+      maintenanceReason: room.maintenanceReason || "",
       imagesCount: Array.isArray(room.images) ? room.images.length : 0,
     };
 
@@ -119,14 +174,20 @@ export const updateRoom = async (req, res) => {
       rate,
       status,
       category,
-      description, // Add description
+      description,
+      maintenanceReason,
     } = req.body;
 
-    // Validate category if it's being updated
-    if (category && category === "room" && !roomType && !room.roomType) {
-      return res.status(400).json({
-        message: "Room type is required for rooms",
-      });
+    const finalCategory =
+      category !== undefined ? category : room.category;
+    if (!["room", "cottage"].includes(finalCategory)) {
+      return res.status(400).json({ message: "Invalid category" });
+    }
+
+    const finalStatus = status !== undefined ? status : room.status;
+    const stErr = validateRoomStatus(finalStatus);
+    if (stErr) {
+      return res.status(400).json({ message: stErr });
     }
 
     // Delete selected images
@@ -157,21 +218,73 @@ export const updateRoom = async (req, res) => {
       }
     }
 
-    // Update fields
-    room.roomNumber = roomNumber ?? room.roomNumber;
-    room.capacity = capacity ?? room.capacity;
-    room.rate = rate ?? room.rate;
-    room.status = status ?? room.status;
-    room.category = category ?? room.category;
-    room.description = description ?? room.description; // Add description update
+    if (!Array.isArray(room.images) || room.images.length === 0) {
+      return res.status(400).json({
+        message: "At least one image is required",
+      });
+    }
 
-    // Only update roomType if category is "room" and it's provided
+    const cap =
+      capacity !== undefined ? parsePositiveIntCapacity(capacity) : room.capacity;
+    if (capacity !== undefined && cap === null) {
+      return res.status(400).json({ message: "Capacity must be a positive integer" });
+    }
+
+    const rtParsed =
+      rate !== undefined ? parseNonNegativeRate(rate) : room.rate;
+    if (rate !== undefined && rtParsed === null) {
+      return res.status(400).json({ message: "Rate must be a non-negative number" });
+    }
+
+    const desc =
+      description !== undefined
+        ? String(description).trim()
+        : String(room.description ?? "").trim();
+    if (!desc) {
+      return res.status(400).json({ message: "Description is required" });
+    }
+
+    if (finalCategory === "room") {
+      const nextType =
+        roomType !== undefined ? roomType : room.roomType;
+      if (!nextType) {
+        return res.status(400).json({
+          message: "Room type is required for rooms",
+        });
+      }
+    }
+
+    let mr =
+      maintenanceReason !== undefined
+        ? String(maintenanceReason).trim()
+        : String(room.maintenanceReason ?? "").trim();
+    if (finalStatus === "maintenance") {
+      if (!mr) {
+        return res.status(400).json({
+          message: "Maintenance reason is required when status is maintenance",
+        });
+      }
+    } else {
+      mr = "";
+    }
+
+    room.roomNumber =
+      roomNumber !== undefined ? String(roomNumber).trim() : room.roomNumber;
+    if (!room.roomNumber) {
+      return res.status(400).json({ message: "Room number is required" });
+    }
+    room.capacity = cap;
+    room.rate = rtParsed;
+    room.status = finalStatus;
+    room.category = finalCategory;
+    room.description = desc;
+    room.maintenanceReason = mr;
+
     if (room.category === "room") {
       if (roomType !== undefined) {
         room.roomType = roomType;
       }
     } else {
-      // Clear roomType for cottages
       room.roomType = null;
     }
 
@@ -186,6 +299,7 @@ export const updateRoom = async (req, res) => {
       status: room.status,
       category: room.category,
       description: room.description || "",
+      maintenanceReason: room.maintenanceReason || "",
       imagesCount: Array.isArray(room.images) ? room.images.length : 0,
     };
 
@@ -213,6 +327,9 @@ export const updateRoom = async (req, res) => {
     }
     if (String(before.description) !== String(after.description)) {
       changes.push(`description updated`);
+    }
+    if (String(before.maintenanceReason) !== String(after.maintenanceReason)) {
+      changes.push(`maintenance reason updated`);
     }
     if (before.imagesCount !== after.imagesCount) {
       changes.push(`images: ${before.imagesCount} → ${after.imagesCount}`);
