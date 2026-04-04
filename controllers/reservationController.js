@@ -4,6 +4,7 @@ import Receipt from "../models/Receipt.js";
 import DiscountImage from "../models/DiscountImage.js";
 import Room from "../models/Room.js";
 import PaymentOption from "../models/PaymentOption.js";
+import Guest from "../models/Guest.js";
 import { broadcast } from "../wsServer.js";
 import cloudinary from "../config/cloudinary.js";
 import mongoose from "mongoose";
@@ -117,6 +118,7 @@ export const addReservation = async (req, res) => {
       adults,
       children = 0,
       guestId,
+      guest,
       notes = "",
       paymentOption,
       status: reqStatus = "pending",
@@ -130,8 +132,81 @@ export const addReservation = async (req, res) => {
         .status(400)
         .json({ error: "checkIn and checkOut are required" });
     if (!adults) return res.status(400).json({ error: "adults is required" });
-    if (!guestId || !mongoose.isValidObjectId(guestId))
-      return res.status(400).json({ error: "Invalid guestId" });
+
+    // Resolve guest ID:
+    // 1) If guest payload is present, treat as walk-in flow and resolve/create guest from payload
+    // 2) Otherwise use provided guestId
+    const normalizedGuestId =
+      typeof guestId === "string" ? guestId.trim() : guestId;
+    let finalGuestId = null;
+    const parsedGuest =
+      typeof guest === "string"
+        ? (() => {
+            try {
+              return JSON.parse(guest);
+            } catch {
+              return null;
+            }
+          })()
+        : guest;
+    const hasGuestPayload =
+      parsedGuest && typeof parsedGuest === "object" && !Array.isArray(parsedGuest);
+
+    if (hasGuestPayload) {
+      const firstName = String(parsedGuest.firstName || "").trim();
+      const lastName = String(parsedGuest.lastName || "").trim();
+      const contactNumber = String(parsedGuest.contactNumber || "").trim();
+
+      if (!firstName || !lastName || !contactNumber) {
+        return res.status(400).json({
+          error:
+            "guest.firstName, guest.lastName, and guest.contactNumber are required for walk-in reservation",
+        });
+      }
+
+      const normalizedGuest = {
+        firstName,
+        lastName,
+        contactNumber,
+        email: parsedGuest.email
+          ? String(parsedGuest.email).trim().toLowerCase()
+          : null,
+      };
+
+      if (normalizedGuest.email) {
+        const existingGuest = await Guest.findOne({ email: normalizedGuest.email });
+        if (existingGuest) {
+          finalGuestId = existingGuest._id;
+        } else {
+          const createdGuest = await Guest.create({
+            ...normalizedGuest,
+            status: "active",
+            accountType: "walk-in",
+            hasAccount: false,
+          });
+          finalGuestId = createdGuest._id;
+        }
+      } else {
+        const createdGuest = await Guest.create({
+          ...normalizedGuest,
+          status: "active",
+          accountType: "walk-in",
+          hasAccount: false,
+        });
+        finalGuestId = createdGuest._id;
+      }
+    } else {
+      finalGuestId =
+        normalizedGuestId === "" ||
+        normalizedGuestId === "null" ||
+        normalizedGuestId === "undefined"
+          ? null
+          : normalizedGuestId || null;
+
+      if (!finalGuestId || !mongoose.isValidObjectId(String(finalGuestId))) {
+        return res.status(400).json({ error: "Invalid guestId" });
+      }
+    }
 
     const inDate = new Date(checkIn);
     const outDate = new Date(checkOut);
@@ -186,7 +261,7 @@ export const addReservation = async (req, res) => {
       checkOut: outDate,
       adults: Number(adults),
       children: Number(children),
-      guestId,
+      guestId: finalGuestId,
       notes,
       paymentOption: paymentOptionDoc._id,
       nights,

@@ -52,6 +52,14 @@ const guestSchema = new Schema(
       default: "walk-in",
     },
 
+    // Explicit source tag for reporting/filtering
+    guestType: {
+      type: String,
+      enum: ["walk-in", "online"],
+      default: "walk-in",
+      index: true,
+    },
+
     // For email verification (if needed)
     isEmailVerified: {
       type: Boolean,
@@ -89,6 +97,23 @@ const guestSchema = new Schema(
 // Index for faster queries
 guestSchema.index({ email: 1 }, { unique: true, sparse: true });
 
+// Keep account flags and guest type consistent.
+guestSchema.pre("validate", function (next) {
+  const isRegistered = this.accountType === "registered" || !!this.password;
+
+  if (isRegistered) {
+    this.accountType = "registered";
+    this.hasAccount = true;
+    this.guestType = "online";
+  } else {
+    this.accountType = "walk-in";
+    this.hasAccount = false;
+    this.guestType = "walk-in";
+  }
+
+  next();
+});
+
 // Hash password before saving if it's modified and not null
 guestSchema.pre("save", async function (next) {
   if (!this.isModified("password") || !this.password) {
@@ -103,6 +128,7 @@ guestSchema.pre("save", async function (next) {
     if (this.password) {
       this.hasAccount = true;
       this.accountType = "registered";
+      this.guestType = "online";
     }
 
     next();
