@@ -33,7 +33,6 @@ export const protect = async (req, res, next) => {
   console.log("Token extracted, length:", token.length);
 
   try {
-    // Decode the token
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     console.log("✅ Token decoded:", {
       id: decoded.id,
@@ -41,17 +40,6 @@ export const protect = async (req, res, next) => {
       role: decoded.role,
     });
 
-    // IMPORTANT: Your token has 'id' field, not 'userId'
-    req.user = {
-      id: decoded.id, // This is what your token has
-      username: decoded.username,
-      email: decoded.email,
-      role: decoded.role,
-    };
-
-    console.log("req.user set to:", req.user);
-
-    // Verify user exists and is active
     const user = await User.findById(decoded.id);
     if (!user) {
       console.log("❌ User not found in database");
@@ -62,6 +50,13 @@ export const protect = async (req, res, next) => {
       console.log("❌ User is inactive");
       return res.status(401).json({ message: "User account is inactive" });
     }
+
+    req.user = {
+      id: decoded.id,
+      username: user.username,
+      email: user.email,
+      role: user.role,
+    };
 
     console.log("✅ User verified, proceeding...");
     next();
@@ -80,7 +75,6 @@ export const protect = async (req, res, next) => {
   }
 };
 
-// Admin-only access
 export const adminOnly = (req, res, next) => {
   if (!["admin", "superadmin"].includes(req.user?.role)) {
     return res.status(403).json({ message: "Access forbidden: Admins only" });
@@ -88,7 +82,6 @@ export const adminOnly = (req, res, next) => {
   next();
 };
 
-// Receptionist OR Admin access
 export const receptionistOrAdmin = (req, res, next) => {
   if (!["admin", "receptionist", "superadmin"].includes(req.user?.role)) {
     return res.status(403).json({ message: "Access forbidden" });

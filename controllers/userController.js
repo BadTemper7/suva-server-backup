@@ -3,6 +3,11 @@ import { generateToken } from "../utils/jwt.js";
 import Setting from "../models/Settings.js";
 import crypto from "crypto";
 import {
+  normalizeReceptionistPermissions,
+  defaultNewReceptionistPermissions,
+  legacyReceptionistPermissions,
+} from "../config/receptionistPermissions.js";
+import {
   sendStaffWelcomeEmail,
   sendStaffPasswordResetEmail,
   sendStaffAccountLockedEmail,
@@ -33,6 +38,7 @@ export const createUser = async (req, res) => {
       username,
       password,
       role,
+      receptionistPermissions: permsBody,
     } = req.body;
 
     // Validations
@@ -97,17 +103,25 @@ export const createUser = async (req, res) => {
       });
     }
 
-    // Create user
-    const user = await User.create({
+    const resolvedRole = role || "receptionist";
+    const payload = {
       firstName: firstName.trim(),
       lastName: lastName.trim(),
       contactNumber: contactNumber.trim(),
       email: email.toLowerCase().trim(),
       username: username.toLowerCase().trim(),
       password,
-      role: role || "receptionist",
-      status: "active", // Always active when created
-    });
+      role: resolvedRole,
+      status: "active",
+    };
+    if (resolvedRole === "receptionist") {
+      payload.receptionistPermissions = normalizeReceptionistPermissions(
+        permsBody,
+        { base: defaultNewReceptionistPermissions() },
+      );
+    }
+
+    const user = await User.create(payload);
 
     // Send welcome email with credentials
     try {
@@ -485,6 +499,7 @@ export const updateUser = async (req, res) => {
       password,
       role,
       status,
+      receptionistPermissions: permsBody,
     } = req.body;
 
     // Validations (only if provided)
@@ -554,6 +569,26 @@ export const updateUser = async (req, res) => {
     if (password) user.password = password;
     if (role !== undefined) user.role = role;
     if (status !== undefined) user.status = status;
+
+    const effectiveRole = role !== undefined ? role : user.role;
+    if (effectiveRole === "receptionist") {
+      const existing =
+        user.receptionistPermissions?.toObject?.() ??
+        user.receptionistPermissions ??
+        legacyReceptionistPermissions();
+      if (permsBody !== undefined) {
+        user.receptionistPermissions = normalizeReceptionistPermissions(
+          permsBody,
+          { base: existing },
+        );
+      } else if (role === "receptionist" && !user.receptionistPermissions) {
+        user.receptionistPermissions = normalizeReceptionistPermissions(null, {
+          base: defaultNewReceptionistPermissions(),
+        });
+      }
+    } else if (role !== undefined && role !== "receptionist") {
+      user.receptionistPermissions = undefined;
+    }
 
     const updatedUser = await user.save();
 
@@ -723,7 +758,8 @@ export const getUserLoginStats = async (req, res) => {
 /* -------------------- GET CURRENT USER -------------------- */
 export const getCurrentUser = async (req, res) => {
   try {
-    const user = await User.findById(req.user._id).select(
+    const userId = req.user.id || req.user._id;
+    const user = await User.findById(userId).select(
       "-password -resetPasswordToken -resetPasswordExpires",
     );
 

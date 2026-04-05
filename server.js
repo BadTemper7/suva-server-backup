@@ -3,6 +3,7 @@ import cors from "cors";
 import dotenv from "dotenv";
 import { connectDB } from "./utils/db.js";
 import User from "./models/userModel.js";
+import { legacyReceptionistPermissions } from "./config/receptionistPermissions.js";
 import { initScheduler, runJobsNow } from "./jobs/scheduler.js";
 import { startAutoUnlockJob } from "./jobs/autoUnlockAccounts.js";
 
@@ -64,6 +65,25 @@ async function ensureSuperAdmin() {
     console.log("✅ Superadmin already exists");
   }
 }
+
+async function backfillReceptionistPermissions() {
+  const legacy = legacyReceptionistPermissions();
+  const res = await User.updateMany(
+    {
+      role: "receptionist",
+      $or: [
+        { receptionistPermissions: { $exists: false } },
+        { receptionistPermissions: null },
+      ],
+    },
+    { $set: { receptionistPermissions: legacy } },
+  );
+  if (res.modifiedCount > 0) {
+    console.log(
+      `✅ Backfilled receptionistPermissions for ${res.modifiedCount} receptionist(s)`,
+    );
+  }
+}
 process.env.TZ = "Asia/Manila";
 console.log("Server Timezone:", new Date().toString());
 async function startServer() {
@@ -74,6 +94,7 @@ async function startServer() {
   console.log("✅ Settings initialized");
 
   await ensureSuperAdmin(); // ✅ called after DB is connected
+  await backfillReceptionistPermissions();
 
   // Initialize all scheduled jobs
   initScheduler();

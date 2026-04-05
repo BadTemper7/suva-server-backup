@@ -11,11 +11,10 @@ import {
   processRefund,
   testTimezone,
 } from "../controllers/billingController.js";
+import Billing from "../models/Billing.js";
 
 const router = express.Router();
 
-// Generate or update billing for a reservation
-// POST /api/billing
 router.get("/", getBillings);
 router.get("/test-timezone", testTimezone);
 router.post("/", generateBilling);
@@ -23,11 +22,9 @@ router.get("/reports", generateBillingReport);
 router.get("/reports/export", exportBillingReport);
 router.put("/calculate/:billingId", updateBillingCalc);
 router.get("/id/:billingId", getBillingById);
-// Get billing by reservation ID
-// GET /api/billing/:reservationId
 router.post("/:billingId/refund", processRefund);
 router.get("/:reservationId", getBillingByReservation);
-// Add this route to billingRoutes.js
+
 router.patch("/:billingId/status", async (req, res) => {
   try {
     const { billingId } = req.params;
@@ -56,4 +53,5 @@ router.patch("/:billingId/status", async (req, res) => {
     return res.status(500).json({ error: error.message });
   }
 });
+
 export default router;

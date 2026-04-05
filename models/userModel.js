@@ -1,6 +1,37 @@
 import mongoose from "mongoose";
 import bcrypt from "bcryptjs";
 
+const receptionistPermissionsSchema = new mongoose.Schema(
+  {
+    frontDesk: {
+      type: String,
+      enum: ["view", "manage"],
+      default: "manage",
+    },
+    reservations: {
+      type: String,
+      enum: ["none", "view", "manage"],
+      default: "manage",
+    },
+    rooms: {
+      type: String,
+      enum: ["none", "view", "manage"],
+      default: "none",
+    },
+    guests: {
+      type: String,
+      enum: ["none", "view", "manage"],
+      default: "none",
+    },
+    billing: {
+      type: String,
+      enum: ["none", "view", "manage"],
+      default: "none",
+    },
+  },
+  { _id: false },
+);
+
 const userSchema = new mongoose.Schema(
   {
     firstName: {
@@ -60,6 +91,11 @@ const userSchema = new mongoose.Schema(
     protected: {
       type: Boolean,
       default: false, // Cannot be deleted
+    },
+
+    receptionistPermissions: {
+      type: receptionistPermissionsSchema,
+      default: undefined,
     },
 
     // Security fields for login attempts
