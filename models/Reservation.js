@@ -83,6 +83,9 @@ const reservationSchema = new Schema(
     userId: { type: Schema.Types.ObjectId, ref: "User" },
 
     pendingConfirmationEmailSent: { type: Boolean, default: false },
+
+    actualCheckInAt: { type: Date, default: null },
+    actualCheckOutAt: { type: Date, default: null },
   },
   { timestamps: true },
 );

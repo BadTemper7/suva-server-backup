@@ -370,6 +370,15 @@ export const updateReservationStatus = async (req, res) => {
     const previousStatus = reservation.status;
     reservation.status = status;
 
+    if (status === "checked_in" && previousStatus !== "checked_in") {
+      if (!reservation.actualCheckInAt) {
+        reservation.actualCheckInAt = new Date();
+      }
+    }
+    if (status === "checked_out" && previousStatus !== "checked_out") {
+      reservation.actualCheckOutAt = new Date();
+    }
+
     // Add notes if provided
     if (notes) {
       reservation.notes = reservation.notes || [];
