@@ -41,6 +41,20 @@ const calcNights = (checkIn, checkOut) => {
   return nights;
 };
 
+const escapeRegex = (value = "") =>
+  String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const createGuestSafely = async (guestPayload = {}) => {
+  const guestDoc = new Guest(guestPayload);
+
+  // Defensive guard: never persist null/blank email for walk-ins.
+  if (!guestDoc.email || !String(guestDoc.email).trim()) {
+    guestDoc.email = undefined;
+  }
+
+  return await guestDoc.save();
+};
+
 // Generate unique reservation number
 const generateReservationNumber = async () => {
   const year = new Date().getUTCFullYear();
@@ -156,6 +170,10 @@ export const addReservation = async (req, res) => {
       const firstName = String(parsedGuest.firstName || "").trim();
       const lastName = String(parsedGuest.lastName || "").trim();
       const contactNumber = String(parsedGuest.contactNumber || "").trim();
+      const normalizedEmail = parsedGuest.email
+        ? String(parsedGuest.email).trim().toLowerCase()
+        : "";
+      const isLikelyOnlineFlow = !userId;
 
       if (!firstName || !lastName || !contactNumber) {
         return res.status(400).json({
@@ -164,21 +182,26 @@ export const addReservation = async (req, res) => {
         });
       }
 
+      // Online flow requires email; walk-in/complimentary does not.
+      if (isLikelyOnlineFlow && !normalizedEmail) {
+        return res.status(400).json({
+          error: "guest.email is required for online reservation",
+        });
+      }
+
       const normalizedGuest = {
         firstName,
         lastName,
         contactNumber,
-        email: parsedGuest.email
-          ? String(parsedGuest.email).trim().toLowerCase()
-          : null,
+        ...(normalizedEmail ? { email: normalizedEmail } : {}),
       };
 
-      if (normalizedGuest.email) {
-        const existingGuest = await Guest.findOne({ email: normalizedGuest.email });
+      if (normalizedEmail) {
+        const existingGuest = await Guest.findOne({ email: normalizedEmail });
         if (existingGuest) {
           finalGuestId = existingGuest._id;
         } else {
-          const createdGuest = await Guest.create({
+          const createdGuest = await createGuestSafely({
             ...normalizedGuest,
             status: "active",
             accountType: "walk-in",
@@ -187,13 +210,24 @@ export const addReservation = async (req, res) => {
           finalGuestId = createdGuest._id;
         }
       } else {
-        const createdGuest = await Guest.create({
-          ...normalizedGuest,
-          status: "active",
-          accountType: "walk-in",
-          hasAccount: false,
-        });
-        finalGuestId = createdGuest._id;
+        // Walk-in/complimentary flow: try to reuse existing guest by name+contact.
+        const existingByIdentity = await Guest.findOne({
+          firstName: { $regex: `^${escapeRegex(firstName)}$`, $options: "i" },
+          lastName: { $regex: `^${escapeRegex(lastName)}$`, $options: "i" },
+          contactNumber,
+        }).sort({ createdAt: -1 });
+
+        if (existingByIdentity) {
+          finalGuestId = existingByIdentity._id;
+        } else {
+          const createdGuest = await createGuestSafely({
+            ...normalizedGuest,
+            status: "active",
+            accountType: "walk-in",
+            hasAccount: false,
+          });
+          finalGuestId = createdGuest._id;
+        }
       }
     } else {
       finalGuestId =
@@ -242,36 +276,44 @@ export const addReservation = async (req, res) => {
       expiresAt = new Date(Date.now() + HOLD_MINUTES * 60 * 1000);
     }
 
-    // Generate reservation number
-    let reservationNumber;
-    for (let i = 0; i < 5; i++) {
-      reservationNumber = await generateReservationNumber();
-      if (!(await Reservation.exists({ reservationNumber }))) break;
-      reservationNumber = null;
+    // --- Create Reservation ---
+    // Retry on duplicate reservation number to avoid race-condition collisions.
+    let savedReservation = null;
+    for (let i = 0; i < 10; i++) {
+      const reservationNumber = await generateReservationNumber();
+      const reservation = new Reservation({
+        reservationNumber,
+        checkIn: inDate,
+        checkOut: outDate,
+        adults: Number(adults),
+        children: Number(children),
+        guestId: finalGuestId,
+        notes,
+        paymentOption: paymentOptionDoc._id,
+        nights,
+        status,
+        userId: userId || null,
+        discountId: discountId || null,
+        expiresAt,
+      });
+
+      try {
+        savedReservation = await reservation.save();
+        break;
+      } catch (saveErr) {
+        if (saveErr?.code === 11000) {
+          // Duplicate reservation number; retry with a new number.
+          continue;
+        }
+        throw saveErr;
+      }
     }
-    if (!reservationNumber)
+
+    if (!savedReservation) {
       return res
         .status(500)
-        .json({ error: "Failed to generate reservation number" });
-
-    // --- Create Reservation ---
-    const reservation = new Reservation({
-      reservationNumber,
-      checkIn: inDate,
-      checkOut: outDate,
-      adults: Number(adults),
-      children: Number(children),
-      guestId: finalGuestId,
-      notes,
-      paymentOption: paymentOptionDoc._id,
-      nights,
-      status,
-      userId: userId || null,
-      discountId: discountId || null,
-      expiresAt,
-    });
-
-    const savedReservation = await reservation.save();
+        .json({ error: "Failed to generate unique reservation number" });
+    }
 
     // Populate references for full details
     const fullReservation = await Reservation.findById(savedReservation._id)
@@ -329,8 +371,18 @@ export const addReservation = async (req, res) => {
     });
   } catch (error) {
     console.error(error);
-    if (error?.code === 11000)
-      return res.status(409).json({ error: "Duplicate reservation number" });
+    if (error?.code === 11000) {
+      if (error?.keyPattern?.reservationNumber) {
+        return res.status(409).json({ error: "Duplicate reservation number" });
+      }
+      if (error?.keyPattern?.email) {
+        return res.status(409).json({
+          error:
+            "Guest email already exists or invalid null email for unique index",
+        });
+      }
+      return res.status(409).json({ error: "Duplicate key error" });
+    }
     return res.status(500).json({ error: error.message });
   }
 };
@@ -342,7 +394,7 @@ export const updateReservationStatus = async (req, res) => {
 
   try {
     const { id } = req.params;
-    const { status, notes, userId } = req.body;
+    const { status, notes, userId, cancelReason } = req.body;
 
     if (!mongoose.isValidObjectId(id))
       return res.status(400).json({ error: "Invalid reservation ID" });
@@ -360,6 +412,15 @@ export const updateReservationStatus = async (req, res) => {
     if (!validStatuses.includes(status))
       return res.status(400).json({ error: "Invalid status", validStatuses });
 
+    const normalizedCancelReason = String(
+      cancelReason ?? (status === "cancelled" ? notes : "") ?? "",
+    ).trim();
+    if (status === "cancelled" && !normalizedCancelReason) {
+      return res.status(400).json({
+        error: "Cancel reason is required when setting status to cancelled",
+      });
+    }
+
     const reservation = await Reservation.findById(id)
       .populate("guestId")
       .session(session);
@@ -369,6 +430,8 @@ export const updateReservationStatus = async (req, res) => {
 
     const previousStatus = reservation.status;
     reservation.status = status;
+    reservation.cancelReason =
+      status === "cancelled" ? normalizedCancelReason : "";
 
     // Add notes if provided
     if (notes) {

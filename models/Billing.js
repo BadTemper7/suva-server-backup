@@ -31,6 +31,7 @@ const billingSchema = new mongoose.Schema(
     },
     refundAmount: { type: Number, default: 0, min: 0 },
     isRefundable: { type: Boolean, default: false },
+    isComplimentary: { type: Boolean, default: false, index: true },
     amountDueNow: { type: Number, default: 0, min: 0 },
   },
   {
@@ -56,6 +57,8 @@ billingSchema.pre("save", function (next) {
 
   this.totalAmount = Number(this.totalAmount || 0);
   this.amountPaid = Number(this.amountPaid || 0);
+  // Preserve explicit complimentary flag while still auto-marking zero-amount bills.
+  this.isComplimentary = Boolean(this.isComplimentary) || this.totalAmount <= 0;
 
   // Compute balance
   this.balance = Math.max(0, this.totalAmount - this.amountPaid);

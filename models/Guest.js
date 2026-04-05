@@ -26,7 +26,12 @@ const guestSchema = new Schema(
       lowercase: true,
       maxlength: 120,
       match: [/^\S+@\S+\.\S+$/, "Invalid email address"],
-      default: null,
+      default: undefined,
+      set: (value) => {
+        if (value === null || value === undefined) return undefined;
+        const normalized = String(value).trim().toLowerCase();
+        return normalized || undefined;
+      },
       // index: true,
       // unique: true,
     },
@@ -75,11 +80,6 @@ const guestSchema = new Schema(
       type: Date,
       default: null,
     },
-    isEmailVerified: {
-      type: Boolean,
-      default: false,
-    },
-
     emailVerificationToken: {
       type: String,
       default: null,
@@ -99,6 +99,13 @@ guestSchema.index({ email: 1 }, { unique: true, sparse: true });
 
 // Keep account flags and guest type consistent.
 guestSchema.pre("validate", function (next) {
+  // Keep email truly optional for walk-ins: avoid storing null/empty strings.
+  if (!this.email || !String(this.email).trim()) {
+    this.email = undefined;
+  } else {
+    this.email = String(this.email).trim().toLowerCase();
+  }
+
   const isRegistered = this.accountType === "registered" || !!this.password;
 
   if (isRegistered) {

@@ -204,48 +204,22 @@ export const createReceipt = async (req, res) => {
     // Determine if this is admin-initiated
     const isAdminAction = isAdminInitiated || isAdmin;
 
-    // Conditional validation based on who is creating and payment type
+    // Receipt-required payment types must include an uploaded image.
     if (requiresReceipt) {
-      if (isAdminAction) {
-        // Admin: Can use either reference number OR receipt image
-        if (!referenceNumber && !req.file) {
-          return res.status(400).json({
-            message: "Either reference number OR receipt image is required",
-          });
-        }
-
-        // If receipt image is provided, upload it
-        if (req.file && req.file.buffer) {
-          const result = await uploadBufferToCloudinary(
-            req.file.buffer,
-            "receipts",
-          );
-          receiptImages.push({
-            url: result.secure_url,
-            publicId: result.public_id,
-          });
-        }
-        // Reference number can be provided without image
-      } else {
-        // Regular user: Must upload receipt image
-        if (!req.file || !req.file.buffer) {
-          return res.status(400).json({
-            message: `Receipt image is required for ${paymentTypeDoc.name}`,
-          });
-        }
-
-        // Upload the receipt image
-        const result = await uploadBufferToCloudinary(
-          req.file.buffer,
-          "receipts",
-        );
-        receiptImages.push({
-          url: result.secure_url,
-          publicId: result.public_id,
+      if (!req.file || !req.file.buffer) {
+        return res.status(400).json({
+          message: `Receipt image is required for ${paymentTypeDoc.name}`,
         });
-
-        // Reference number is optional for regular users
       }
+
+      const result = await uploadBufferToCloudinary(
+        req.file.buffer,
+        "receipts",
+      );
+      receiptImages.push({
+        url: result.secure_url,
+        publicId: result.public_id,
+      });
     } else {
       // Payment type doesn't require receipt
       if (req.file && req.file.buffer) {
