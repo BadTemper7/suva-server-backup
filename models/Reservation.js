@@ -74,6 +74,7 @@ const reservationSchema = new Schema(
       default: "pending",
       index: true,
     },
+    cancelReason: { type: String, default: "", trim: true, maxlength: 500 },
     discountId: { type: Schema.Types.ObjectId, ref: "Discount" },
     expiresAt: {
       type: Date,

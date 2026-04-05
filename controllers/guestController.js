@@ -136,16 +136,18 @@ export const createGuest = async (req, res) => {
       }
     }
 
+    const normalizedEmail = email ? String(email).trim().toLowerCase() : "";
+
     const guestData = {
       firstName: String(firstName).trim(),
       lastName: String(lastName).trim(),
       contactNumber: String(contactNumber).trim(),
-      email: email ? String(email).trim().toLowerCase() : null,
+      ...(normalizedEmail ? { email: normalizedEmail } : {}),
       status,
     };
 
     // If password is provided, set up account
-    if (password && email) {
+    if (password && normalizedEmail) {
       guestData.password = password;
       guestData.hasAccount = true;
       guestData.accountType = "registered";
@@ -153,14 +155,18 @@ export const createGuest = async (req, res) => {
       guestData.accountType = "walk-in";
     }
 
-    const guest = await Guest.create(guestData);
+    const guestDoc = new Guest(guestData);
+    if (!normalizedEmail) {
+      guestDoc.email = undefined;
+    }
+    const guest = await guestDoc.save();
 
     // Don't return password in response
     const guestResponse = guest.toObject();
     delete guestResponse.password;
 
     // Send welcome email if account was created with password
-    if (password && email) {
+    if (password && normalizedEmail) {
       try {
         await sendWelcomeEmail(guestResponse);
         console.log(`✅ Welcome email sent to ${guestResponse.email}`);

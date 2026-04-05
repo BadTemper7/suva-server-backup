@@ -23,6 +23,13 @@ const formatMoney = (amount) => {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const { Reservation, ReservationRoom } = ReservationModels;
+
+const isComplimentaryReservation = (reservation) => {
+  if (!reservation) return false;
+  const noteText = String(reservation.notes || "").toLowerCase();
+  return noteText.includes("complimentary reservation");
+};
+
 const calcNights = (checkIn, checkOut) => {
   const inDate = new Date(checkIn);
   const outDate = new Date(checkOut);
@@ -113,6 +120,7 @@ export const generateBilling = async (req, res) => {
     }
 
     const billingNumber = await Billing.generateBillingNumber();
+    const complimentaryFlag = isComplimentaryReservation(reservation);
     let billing = await Billing.findOne({ reservationId });
 
     if (!billing) {
@@ -123,6 +131,7 @@ export const generateBilling = async (req, res) => {
         discountAmount,
         totalAmount,
         amountDueNow,
+        isComplimentary: complimentaryFlag,
       });
     } else {
       billing.billingNumber = billingNumber;
@@ -130,6 +139,7 @@ export const generateBilling = async (req, res) => {
       billing.discountAmount = discountAmount;
       billing.totalAmount = totalAmount;
       billing.amountDueNow = amountDueNow;
+      billing.isComplimentary = complimentaryFlag;
     }
 
     await billing.save();
@@ -247,6 +257,7 @@ export const updateBillingCalc = async (req, res) => {
     if (!reservation) {
       return res.status(404).json({ message: "Reservation not found" });
     }
+    const complimentaryFlag = isComplimentaryReservation(reservation);
 
     const paymentOption = await PaymentOption.findById(
       reservation.paymentOption,
@@ -383,6 +394,7 @@ export const updateBillingCalc = async (req, res) => {
     billing.status = status;
     billing.isRefundable = isRefundable;
     billing.refundAmount = refundAmount;
+    billing.isComplimentary = complimentaryFlag;
 
     await billing.save();
 
