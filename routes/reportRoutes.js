@@ -4,6 +4,7 @@ import {
   getReservationsReport,
   getReservationStatusReport,
   getRoomOccupancyReport,
+  getOperationsLogsReport,
   getRevenueReport,
   getPaymentReport,
   getRefundReport,
@@ -18,6 +19,7 @@ const router = express.Router();
 router.get("/reservations", getReservationsReport);
 router.get("/reservation-status", getReservationStatusReport);
 router.get("/occupancy", getRoomOccupancyReport);
+router.get("/operations-logs", getOperationsLogsReport);
 
 // Billing Reports
 router.get("/revenue", getRevenueReport);
