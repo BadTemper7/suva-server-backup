@@ -1355,12 +1355,12 @@ export const sendReservationStatusEmail = async (
     newStatus === "confirmed"
       ? `
           <div style="background:#ecfdf5;border-radius:16px;padding:18px 20px;margin:0 0 24px 0;border:1px solid #a7f3d0;">
-            <p style="color:#065f46;font-weight:700;margin:0 0 10px 0;font-size:15px;">Reminder: grace period &amp; security deposit</p>
-            <p style="color:#047857;font-size:14px;margin:0 0 10px 0;line-height:1.55;">
+            <p style="color:#222;font-weight:700;margin:0 0 10px 0;font-size:15px;">Reminder: grace period &amp; security deposit</p>
+            <p style="color:#222;font-size:14px;margin:0 0 10px 0;line-height:1.55;">
               At check-in, please present a <strong>valid government ID</strong> and pay a <strong>cash security deposit</strong>:
               <strong>₱500</strong> for Cuarto &amp; Teodora, or <strong>₱1,000</strong> for Casa. The deposit is returned at checkout if there is no damage.
             </p>
-            <p style="color:#047857;font-size:14px;margin:0;line-height:1.55;">
+            <p style="color:#222;font-size:14px;margin:0;line-height:1.55;">
               <strong>Grace period:</strong> Aim to arrive at your scheduled check-in time. If you will be late, please contact us. A <strong>2-hour grace period</strong> applies after <strong>2:00 PM</strong> on your check-in date; arrivals beyond that without notice may be treated as a no-show under resort policy.
             </p>
           </div>`
