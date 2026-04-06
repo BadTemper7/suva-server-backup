@@ -25,7 +25,7 @@ const billingSchema = new mongoose.Schema(
 
     status: {
       type: String,
-      enum: ["unpaid", "partial", "paid", "refunded", "voided"],
+      enum: ["unpaid", "partial", "paid", "free", "refunded", "voided"],
       default: "unpaid",
       index: true,
     },
@@ -51,7 +51,7 @@ billingSchema.virtual("receipts", {
 
 billingSchema.pre("save", function (next) {
   // If status is already refunded, don't change it
-  if (this.status === "refunded") {
+  if (this.status === "refunded" || this.status === "voided") {
     return next();
   }
 
@@ -59,6 +59,14 @@ billingSchema.pre("save", function (next) {
   this.amountPaid = Number(this.amountPaid || 0);
   // Preserve explicit complimentary flag while still auto-marking zero-amount bills.
   this.isComplimentary = Boolean(this.isComplimentary) || this.totalAmount <= 0;
+
+  // Complimentary billings should have an explicit "free" status for UI clarity.
+  if (this.isComplimentary) {
+    this.balance = 0;
+    this.amountDueNow = 0;
+    this.status = "free";
+    return next();
+  }
 
   // Compute balance
   this.balance = Math.max(0, this.totalAmount - this.amountPaid);

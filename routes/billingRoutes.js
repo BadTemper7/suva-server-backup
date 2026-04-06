@@ -30,7 +30,11 @@ router.patch("/:billingId/status", async (req, res) => {
     const { billingId } = req.params;
     const { status } = req.body;
 
-    if (!["unpaid", "partial", "paid", "refunded", "voided"].includes(status)) {
+    if (
+      !["unpaid", "partial", "paid", "free", "refunded", "voided"].includes(
+        status,
+      )
+    ) {
       return res.status(400).json({ error: "Invalid status" });
     }
 

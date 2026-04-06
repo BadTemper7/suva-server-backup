@@ -725,6 +725,7 @@ function calculateBillingSummary(billings) {
       paid: 0,
       unpaid: 0,
       partial: 0,
+      free: 0,
       refunded: 0,
       voided: 0,
     },
