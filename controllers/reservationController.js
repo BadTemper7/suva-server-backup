@@ -15,6 +15,7 @@ import path from "path";
 import { createNotification } from "../models/Notification.js";
 import { sendReservationStatusEmail } from "../config/email.js";
 import { emailQueue } from "../utils/emailQueue.js";
+import OperationLog from "../models/OperationLog.js";
 
 const { Reservation, ReservationRoom } = ReservationModels;
 
@@ -429,6 +430,7 @@ export const updateReservationStatus = async (req, res) => {
       return res.status(404).json({ error: "Reservation not found" });
 
     const previousStatus = reservation.status;
+    const actorUserId = req.user?._id || userId || null;
     reservation.status = status;
     reservation.cancelReason =
       status === "cancelled" ? normalizedCancelReason : "";
@@ -447,12 +449,58 @@ export const updateReservationStatus = async (req, res) => {
       reservation.notes = reservation.notes || [];
       reservation.notes.push({
         text: notes,
-        userId: userId || req.user?._id,
+        userId: actorUserId,
         date: new Date(),
       });
     }
 
     await reservation.save({ session });
+
+    if (
+      (status === "checked_in" && previousStatus !== "checked_in") ||
+      (status === "checked_out" && previousStatus !== "checked_out")
+    ) {
+      const action = status === "checked_in" ? "check_in" : "check_out";
+      const reservationRooms = await ReservationRoom.find({
+        reservationId: reservation._id,
+      })
+        .select("roomId")
+        .session(session);
+
+      const roomIds = [
+        ...new Set(
+          reservationRooms
+            .map((rr) => rr?.roomId?.toString?.() || String(rr?.roomId || ""))
+            .filter(Boolean),
+        ),
+      ];
+
+      if (roomIds.length > 0) {
+        const units = await Room.find({ _id: { $in: roomIds } })
+          .select("_id category")
+          .session(session);
+        const unitById = new Map(units.map((u) => [String(u._id), u]));
+
+        const logDocs = roomIds
+          .map((id) => {
+            const unit = unitById.get(String(id));
+            if (!unit) return null;
+            return {
+              unitType: unit.category === "cottage" ? "cottage" : "room",
+              unitId: unit._id,
+              action,
+              reservationId: reservation._id,
+              performedBy: actorUserId || reservation.userId || null,
+            };
+          })
+          .filter(Boolean);
+
+        if (logDocs.length > 0) {
+          await OperationLog.insertMany(logDocs, { session });
+        }
+      }
+    }
+
     await session.commitTransaction();
     session.endSession();
 
@@ -482,7 +530,7 @@ export const updateReservationStatus = async (req, res) => {
 
     // Create notification
     await createNotification({
-      actorUserId: req.user?._id || userId || null,
+      actorUserId,
       type: "reservation",
       title: "Reservation Status Updated",
       description: `Reservation ${updatedReservation.reservationNumber} changed from ${previousStatus} to ${status}. Email notification queued.`,

@@ -1,8 +1,12 @@
 import Room from "../models/Room.js";
+import ReservationModels from "../models/Reservation.js";
 import cloudinary from "../config/cloudinary.js";
 import { createNotification } from "../models/Notification.js";
+import OperationLog from "../models/OperationLog.js";
+import { fetchOperationsLogsReportPayload } from "../utils/operationsLogsReport.js";
 
 const ALLOWED_ROOM_STATUSES = ["active", "maintenance", "clean", "to-clean"];
+const { Reservation, ReservationRoom } = ReservationModels;
 
 function validateRoomStatus(status) {
   if (!status || status === "inactive" || !ALLOWED_ROOM_STATUSES.includes(status)) {
@@ -21,6 +25,40 @@ function parseNonNegativeRate(value) {
   const n = Number(value);
   if (!Number.isFinite(n) || n < 0) return null;
   return n;
+}
+
+async function findReservationIdForLogDate(roomId, logDate = new Date()) {
+  if (!roomId) return null;
+
+  const links = await ReservationRoom.find({ roomId })
+    .select("reservationId")
+    .lean();
+  const reservationIds = [
+    ...new Set(
+      links
+        .map((l) => l?.reservationId?.toString?.() || String(l?.reservationId || ""))
+        .filter(Boolean),
+    ),
+  ];
+  if (reservationIds.length === 0) return null;
+
+  const dayStart = new Date(logDate);
+  dayStart.setHours(0, 0, 0, 0);
+  const dayEnd = new Date(logDate);
+  dayEnd.setHours(23, 59, 59, 999);
+
+  const reservationForDate = await Reservation.findOne({
+    _id: { $in: reservationIds },
+    // Link when the log day falls within the reservation stay window.
+    checkIn: { $lte: dayEnd },
+    checkOut: { $gte: dayStart },
+    status: { $nin: ["cancelled", "expired", "no_show"] },
+  })
+    .sort({ checkIn: 1, createdAt: 1 })
+    .select("_id")
+    .lean();
+
+  return reservationForDate?._id || null;
 }
 
 /* -------------------- CREATE ROOM -------------------- */
@@ -120,6 +158,26 @@ export const createRoom = async (req, res) => {
     const room = new Room(roomData);
 
     await room.save();
+
+    const normalized = String(room.status || "").toLowerCase().trim();
+    const action =
+      normalized === "maintenance"
+        ? "maintenance"
+        : normalized === "to-clean"
+          ? "cleaning"
+          : null;
+
+    // Initial log for created units if they start in a tracked status.
+    if (action) {
+      const reservationId = await findReservationIdForLogDate(room._id);
+      await OperationLog.create({
+        unitType: room.category === "cottage" ? "cottage" : "room",
+        unitId: room._id,
+        action,
+        reservationId,
+        performedBy: req.user?._id || null,
+      });
+    }
 
     // ✅ NOTIFICATION: Room created
     await createNotification({
@@ -290,6 +348,31 @@ export const updateRoom = async (req, res) => {
 
     await room.save();
 
+    const statusChanged = String(before.status) !== String(room.status);
+    const statusProvided = Object.prototype.hasOwnProperty.call(
+      req.body,
+      "status",
+    );
+    const normalized = String(room.status || "").toLowerCase().trim();
+    const action =
+      normalized === "maintenance"
+        ? "maintenance"
+        : normalized === "to-clean"
+          ? "cleaning"
+          : null;
+
+    // Trigger maintenance/cleaning logs on status update in Rooms/Cottages edit.
+    if (action && (statusProvided || statusChanged)) {
+      const reservationId = await findReservationIdForLogDate(room._id);
+      await OperationLog.create({
+        unitType: room.category === "cottage" ? "cottage" : "room",
+        unitId: room._id,
+        action,
+        reservationId,
+        performedBy: req.user?._id || null,
+      });
+    }
+
     // ✅ NOTIFICATION: Room updated
     const after = {
       roomNumber: room.roomNumber,
@@ -387,6 +470,9 @@ export const getRooms = async (req, res) => {
 /* -------------------- GET SINGLE ROOM -------------------- */
 export const getRoomById = async (req, res) => {
   try {
+    if (!req.params.id || !/^[0-9a-fA-F]{24}$/.test(String(req.params.id))) {
+      return res.status(400).json({ message: "Invalid room ID" });
+    }
     const room = await Room.findById(req.params.id).populate("roomType");
     if (!room)
       return res
@@ -492,6 +578,91 @@ export const deleteMultipleRooms = async (req, res) => {
     console.error(error);
     res.status(500).json({
       message: "Failed to delete multiple rooms",
+      error: error.message,
+    });
+  }
+};
+
+export const getOperationLogs = async (req, res) => {
+  try {
+    if (String(req.query.format || "").toLowerCase() === "report") {
+      const data = await fetchOperationsLogsReportPayload(req.query);
+      return res.status(200).json(data);
+    }
+
+    const {
+      unitType = "room",
+      action = "all",
+      startDate,
+      endDate,
+      page = 1,
+      pageSize = 10,
+    } = req.query;
+
+    if (!["room", "cottage"].includes(unitType)) {
+      return res.status(400).json({ message: "Invalid unitType" });
+    }
+
+    const query = { unitType };
+    if (
+      action &&
+      action !== "all" &&
+      ["cleaning", "maintenance", "check_in", "check_out"].includes(action)
+    ) {
+      query.action = action;
+    }
+
+    if (startDate || endDate) {
+      query.createdAt = {};
+      if (startDate) {
+        const s = new Date(startDate);
+        if (Number.isNaN(s.getTime())) {
+          return res.status(400).json({ message: "Invalid startDate" });
+        }
+        s.setHours(0, 0, 0, 0);
+        query.createdAt.$gte = s;
+      }
+      if (endDate) {
+        const e = new Date(endDate);
+        if (Number.isNaN(e.getTime())) {
+          return res.status(400).json({ message: "Invalid endDate" });
+        }
+        e.setHours(23, 59, 59, 999);
+        query.createdAt.$lte = e;
+      }
+    }
+
+    const pageNum = Math.max(1, Number.parseInt(page, 10) || 1);
+    const sizeNum = Math.min(
+      100,
+      Math.max(1, Number.parseInt(pageSize, 10) || 10),
+    );
+    const skip = (pageNum - 1) * sizeNum;
+
+    const [total, logs] = await Promise.all([
+      OperationLog.countDocuments(query),
+      OperationLog.find(query)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(sizeNum)
+        .populate("unitId", "roomNumber roomNo category")
+        .populate("reservationId", "reservationNumber")
+        .populate("performedBy", "firstName lastName username"),
+    ]);
+
+    return res.status(200).json({
+      success: true,
+      logs,
+      pagination: {
+        total,
+        page: pageNum,
+        pageSize: sizeNum,
+        totalPages: Math.max(1, Math.ceil(total / sizeNum)),
+      },
+    });
+  } catch (error) {
+    return res.status(500).json({
+      message: "Failed to fetch operation logs",
       error: error.message,
     });
   }

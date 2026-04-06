@@ -3,6 +3,7 @@ import multer from "multer";
 import {
   createRoom,
   getRooms,
+  getOperationLogs,
   getRoomById,
   updateRoom,
   deleteRoom,
@@ -22,6 +23,7 @@ const upload = multer({ storage });
 
 /* -------------------- ROUTES -------------------- */
 router.post("/", protect, adminOnly, upload.array("images"), createRoom);
+router.get("/operations-logs", protect, receptionistOrAdmin, getOperationLogs);
 router.get("/", getRooms);
 router.get("/:id", protect, receptionistOrAdmin, getRoomById);
 router.put("/:id", protect, adminOnly, upload.array("images"), updateRoom);

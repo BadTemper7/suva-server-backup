@@ -9,6 +9,16 @@ import Guest from "../models/Guest.js";
 import Room from "../models/Room.js";
 import PaymentOption from "../models/PaymentOption.js";
 import PaymentType from "../models/PaymentType.js";
+import {
+  fetchOperationsLogsReportPayload,
+  fetchOperationsLogsForExport,
+} from "../utils/operationsLogsReport.js";
+import {
+  getReportExportFormatContext,
+  formatExportDate,
+  formatExportDateTime,
+  formatExportFilenameDate,
+} from "../utils/reportExportFormatting.js";
 const { Reservation, ReservationRoom } = ReservationModel;
 // Helper function to generate date ranges
 const getDateRange = (period, startDate, endDate) => {
@@ -335,6 +345,20 @@ export const getRoomOccupancyReport = async (req, res) => {
   }
 };
 
+// 4. Operations Logs Report
+export const getOperationsLogsReport = async (req, res) => {
+  try {
+    const data = await fetchOperationsLogsReportPayload(req.query);
+    return res.status(200).json(data);
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: "Error generating operations logs report",
+      error: error.message,
+    });
+  }
+};
+
 // ========== BILLING REPORTS ==========
 
 // 4. Daily/Monthly Revenue Report
@@ -650,30 +674,34 @@ export const getOutstandingBalanceReport = async (req, res) => {
 export const exportReportToExcel = async (req, res) => {
   try {
     const { reportType, ...queryParams } = req.query;
+    const fmt = await getReportExportFormatContext();
     let reportData;
 
     // Get report data based on type
     switch (reportType) {
       case "reservations":
-        reportData = await getReservationsReportData(queryParams);
+        reportData = await getReservationsReportData(queryParams, fmt);
         break;
       case "status":
-        reportData = await getStatusReportData(queryParams);
+        reportData = await getStatusReportData(queryParams, fmt);
         break;
       case "revenue":
-        reportData = await getRevenueReportData(queryParams);
+        reportData = await getRevenueReportData(queryParams, fmt);
         break;
       case "occupancy":
-        reportData = await getOccupancyReportData(queryParams);
+        reportData = await getOccupancyReportData(queryParams, fmt);
+        break;
+      case "operations-logs":
+        reportData = await getOperationsLogsReportData(queryParams, fmt);
         break;
       case "payments":
-        reportData = await getPaymentsReportData(queryParams);
+        reportData = await getPaymentsReportData(queryParams, fmt);
         break;
       case "refunds":
-        reportData = await getRefundsReportData(queryParams);
+        reportData = await getRefundsReportData(queryParams, fmt);
         break;
       case "outstanding":
-        reportData = await getOutstandingReportData(queryParams);
+        reportData = await getOutstandingReportData(queryParams, fmt);
         break;
       default:
         return res.status(400).json({
@@ -718,7 +746,7 @@ export const exportReportToExcel = async (req, res) => {
     );
     res.setHeader(
       "Content-Disposition",
-      `attachment; filename=${reportType}_report_${new Date().toISOString().split("T")[0]}.xlsx`,
+      `attachment; filename=${reportType}_report_${formatExportFilenameDate(fmt)}.xlsx`,
     );
 
     res.send(buffer);
@@ -733,7 +761,7 @@ export const exportReportToExcel = async (req, res) => {
 };
 
 // Helper functions for Excel export
-const getReservationsReportData = async (params) => {
+const getReservationsReportData = async (params, fmt) => {
   const { period, startDate, endDate, status } = params;
   const { start, end } = getDateRange(period, startDate, endDate);
 
@@ -768,19 +796,19 @@ const getReservationsReportData = async (params) => {
       guestName: r.guestId
         ? `${r.guestId.firstName} ${r.guestId.lastName}`
         : "N/A",
-      checkIn: r.checkIn?.toISOString().split("T")[0],
-      checkOut: r.checkOut?.toISOString().split("T")[0],
+      checkIn: formatExportDate(r.checkIn, fmt),
+      checkOut: formatExportDate(r.checkOut, fmt),
       nights: r.nights,
       adults: r.adults,
       children: r.children,
       status: r.status,
       paymentOption: r.paymentOption?.name || "N/A",
-      createdAt: r.createdAt.toISOString().split("T")[0],
+      createdAt: formatExportDateTime(r.createdAt, fmt),
     })),
   };
 };
 
-const getStatusReportData = async (params) => {
+const getStatusReportData = async (params, _fmt) => {
   const { period, startDate, endDate } = params;
   const { start, end } = getDateRange(period, startDate, endDate);
 
@@ -820,7 +848,7 @@ const getStatusReportData = async (params) => {
   };
 };
 
-const getRevenueReportData = async (params) => {
+const getRevenueReportData = async (params, fmt) => {
   const { period, startDate, endDate } = params;
   const { start, end } = getDateRange(period, startDate, endDate);
 
@@ -861,12 +889,12 @@ const getRevenueReportData = async (params) => {
       amountPaid: b.amountPaid,
       balance: b.balance,
       status: b.status,
-      paymentDate: b.updatedAt.toISOString().split("T")[0],
+      paymentDate: formatExportDateTime(b.updatedAt, fmt),
     })),
   };
 };
 
-const getOccupancyReportData = async (params) => {
+const getOccupancyReportData = async (params, _fmt) => {
   const { period, startDate, endDate } = params;
   const { start, end } = getDateRange(period, startDate, endDate);
 
@@ -928,7 +956,10 @@ const getOccupancyReportData = async (params) => {
   };
 };
 
-const getPaymentsReportData = async (params) => {
+const getOperationsLogsReportData = async (params, fmt) =>
+  fetchOperationsLogsForExport(params, fmt);
+
+const getPaymentsReportData = async (params, fmt) => {
   const { period, startDate, endDate, status } = params;
   const { start, end } = getDateRange(period, startDate, endDate);
 
@@ -985,12 +1016,12 @@ const getPaymentsReportData = async (params) => {
       amountReceived: receipt.amountReceived || 0,
       change: receipt.change || 0,
       status: receipt.status,
-      paymentDate: receipt.createdAt.toISOString().split("T")[0],
+      paymentDate: formatExportDateTime(receipt.createdAt, fmt),
     })),
   };
 };
 
-const getRefundsReportData = async (params) => {
+const getRefundsReportData = async (params, fmt) => {
   const { period, startDate, endDate } = params;
   const { start, end } = getDateRange(period, startDate, endDate);
 
@@ -1029,13 +1060,13 @@ const getRefundsReportData = async (params) => {
         : "N/A",
       originalAmount: billing.totalAmount || 0,
       refundAmount: billing.refundAmount || 0,
-      refundDate: billing.updatedAt.toISOString().split("T")[0],
+      refundDate: formatExportDateTime(billing.updatedAt, fmt),
       notes: billing.notes || "",
     })),
   };
 };
 
-const getOutstandingReportData = async (params) => {
+const getOutstandingReportData = async (params, fmt) => {
   const billings = await Billing.find({
     status: { $in: ["unpaid", "partial"] },
     balance: { $gt: 0 },
@@ -1084,7 +1115,9 @@ const getOutstandingReportData = async (params) => {
         guestName: billing.reservationId?.guestId
           ? `${billing.reservationId.guestId.firstName} ${billing.reservationId.guestId.lastName}`
           : "N/A",
-        checkInDate: checkInDate?.toISOString().split("T")[0] || "N/A",
+        checkInDate: checkInDate
+          ? formatExportDate(checkInDate, fmt)
+          : "N/A",
         totalAmount: billing.totalAmount || 0,
         amountPaid: billing.amountPaid || 0,
         balance: billing.balance || 0,
@@ -1100,30 +1133,34 @@ const getOutstandingReportData = async (params) => {
 export const exportReportToPDF = async (req, res) => {
   try {
     const { reportType, ...queryParams } = req.query;
+    const fmt = await getReportExportFormatContext();
     let reportData;
 
     // Get report data based on type
     switch (reportType) {
       case "reservations":
-        reportData = await getReservationsReportData(queryParams);
+        reportData = await getReservationsReportData(queryParams, fmt);
         break;
       case "status":
-        reportData = await getStatusReportData(queryParams);
+        reportData = await getStatusReportData(queryParams, fmt);
         break;
       case "revenue":
-        reportData = await getRevenueReportData(queryParams);
+        reportData = await getRevenueReportData(queryParams, fmt);
         break;
       case "occupancy":
-        reportData = await getOccupancyReportData(queryParams);
+        reportData = await getOccupancyReportData(queryParams, fmt);
+        break;
+      case "operations-logs":
+        reportData = await getOperationsLogsReportData(queryParams, fmt);
         break;
       case "payments":
-        reportData = await getPaymentsReportData(queryParams);
+        reportData = await getPaymentsReportData(queryParams, fmt);
         break;
       case "refunds":
-        reportData = await getRefundsReportData(queryParams);
+        reportData = await getRefundsReportData(queryParams, fmt);
         break;
       case "outstanding":
-        reportData = await getOutstandingReportData(queryParams);
+        reportData = await getOutstandingReportData(queryParams, fmt);
         break;
       default:
         return res.status(400).json({
@@ -1138,7 +1175,7 @@ export const exportReportToPDF = async (req, res) => {
       size: "A4",
       layout: "landscape",
     });
-    const filename = `${reportType}_report_${new Date().toISOString().split("T")[0]}.pdf`;
+    const filename = `${reportType}_report_${formatExportFilenameDate(fmt)}.pdf`;
 
     // Set headers for download
     res.setHeader("Content-Type", "application/pdf");
@@ -1165,16 +1202,13 @@ export const exportReportToPDF = async (req, res) => {
     }
     if (queryParams.startDate && queryParams.endDate) {
       doc.text(
-        `Date Range: ${new Date(queryParams.startDate).toLocaleDateString()} - ${new Date(queryParams.endDate).toLocaleDateString()}`,
+        `Date Range: ${formatExportDate(new Date(queryParams.startDate), fmt)} - ${formatExportDate(new Date(queryParams.endDate), fmt)}`,
         { align: "left" },
       );
     }
-    doc.text(
-      `Generated on: ${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString()}`,
-      {
-        align: "right",
-      },
-    );
+    doc.text(`Generated on: ${formatExportDateTime(new Date(), fmt)}`, {
+      align: "right",
+    });
     doc.moveDown(2);
 
     // Add table
