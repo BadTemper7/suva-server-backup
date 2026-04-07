@@ -553,21 +553,30 @@ export const confirmMultipleReceipts = async (req, res) => {
       });
     }
 
-    const receipts = await Receipt.find({
+    const allMatchedReceipts = await Receipt.find({
       _id: { $in: validIds },
-      status: { $ne: "confirmed" },
     }).populate("paymentType billingId");
 
-    if (receipts.length === 0) {
+    if (allMatchedReceipts.length === 0) {
       return res.status(404).json({
-        message: "No pending receipts found with the provided IDs",
+        message: "No receipts found with the provided IDs",
+      });
+    }
+
+    const receipts = allMatchedReceipts.filter((r) => r.status !== "confirmed");
+    if (receipts.length === 0) {
+      return res.json({
+        message: "All selected receipts are already confirmed",
+        modifiedCount: 0,
+        receipts: allMatchedReceipts,
       });
     }
 
     const billingMap = {};
     for (const receipt of receipts) {
       const key =
-        receipt.billingId?._id?.toString?.() || receipt.billingId.toString();
+        receipt.billingId?._id?.toString?.() || receipt.billingId?.toString?.();
+      if (!key) continue;
       if (!billingMap[key]) billingMap[key] = [];
       billingMap[key].push(receipt);
     }
@@ -607,8 +616,9 @@ export const confirmMultipleReceipts = async (req, res) => {
       }
     }
 
+    const idsToConfirm = receipts.map((r) => r._id);
     const updateResult = await Receipt.updateMany(
-      { _id: { $in: receipts.map((r) => r._id) } },
+      { _id: { $in: idsToConfirm } },
       { $set: { status: "confirmed" } },
     );
 
@@ -638,7 +648,7 @@ export const confirmMultipleReceipts = async (req, res) => {
     });
 
     const updatedReceipts = await Receipt.find({
-      _id: { $in: receipts.map((r) => r._id) },
+      _id: { $in: idsToConfirm },
     }).populate("paymentType billingId");
 
     return res.json({
@@ -685,8 +695,18 @@ export const rejectMultipleReceipts = async (req, res) => {
       });
     }
 
+    const idsToReject = receipts
+      .filter((r) => r.status !== "rejected")
+      .map((r) => r._id);
+    if (idsToReject.length === 0) {
+      return res.json({
+        message: "All selected receipts are already rejected",
+        modifiedCount: 0,
+      });
+    }
+
     const updateResult = await Receipt.updateMany(
-      { _id: { $in: receipts.map((r) => r._id) } },
+      { _id: { $in: idsToReject } },
       {
         $set: {
           status: "rejected",

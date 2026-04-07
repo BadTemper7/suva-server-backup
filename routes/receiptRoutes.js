@@ -25,14 +25,14 @@ router.get("/:id", getReceiptById);
 router.post("/upload", upload.single("receiptImage"), createReceipt);
 
 // PATCH routes
+router.patch("/bulk/confirm", confirmMultipleReceipts);
+router.patch("/bulk/reject", rejectMultipleReceipts);
 router.patch("/:id/status", updateReceiptStatus);
 router.patch("/:id/confirm", confirmReceipt);
 router.patch("/:id/reject", rejectReceipt);
-router.patch("/bulk/confirm", confirmMultipleReceipts);
-router.patch("/bulk/reject", rejectMultipleReceipts);
 
 // DELETE routes
-router.delete("/bulk", deleteMultipleReceipts); // Changed to just /bulk
+router.delete("/bulk", deleteMultipleReceipts);
 router.delete("/:id", deleteReceipt);
 
 export default router;
