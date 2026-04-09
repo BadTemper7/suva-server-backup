@@ -1710,11 +1710,8 @@ export const getReservationsByGuest = async (req, res) => {
               .sort({ createdAt: -1 })
               .lean();
 
-            // Calculate total paid from all receipts
-            totalPaid = receipts.reduce(
-              (sum, r) => sum + (r.amountPaid || 0),
-              0,
-            );
+            // Keep guest payload aligned with authoritative billing totals/status.
+            totalPaid = Number(billing.amountPaid || 0);
           } catch (receiptErr) {
             console.log(
               `Error fetching receipts for reservation ${reservation._id}:`,
@@ -1725,7 +1722,9 @@ export const getReservationsByGuest = async (req, res) => {
 
         // Calculate remaining balance
         const totalAmount = billing?.totalAmount || 0;
-        const remainingBalance = totalAmount - totalPaid;
+        const remainingBalance = billing
+          ? Number(billing.balance ?? totalAmount - totalPaid)
+          : totalAmount - totalPaid;
 
         // 4️⃣ Calculate room totals summary
         const roomsTotal = rooms.reduce((sum, r) => sum + r.total, 0);
@@ -1735,13 +1734,15 @@ export const getReservationsByGuest = async (req, res) => {
         );
 
         // 5️⃣ Determine payment status based on billing
-        let paymentStatus = "unpaid";
-        if (totalPaid >= totalAmount && totalAmount > 0) {
-          paymentStatus = "paid";
-        } else if (totalPaid > 0 && totalPaid < totalAmount) {
-          paymentStatus = "partial";
-        } else if (totalPaid === 0) {
-          paymentStatus = "unpaid";
+        let paymentStatus = billing?.status || "unpaid";
+        if (!billing) {
+          if (totalPaid >= totalAmount && totalAmount > 0) {
+            paymentStatus = "paid";
+          } else if (totalPaid > 0 && totalPaid < totalAmount) {
+            paymentStatus = "partial";
+          } else if (totalPaid === 0) {
+            paymentStatus = "unpaid";
+          }
         }
 
         // 6️⃣ Check if reservation is upcoming, ongoing, or past
@@ -1840,7 +1841,7 @@ export const getReservationsByGuest = async (req, res) => {
                 amountPaid: totalPaid,
                 balance: remainingBalance,
                 status: billing.status,
-                paymentStatus: paymentStatus,
+                paymentStatus: billing.status || paymentStatus,
                 amountDueNow: billing.amountDueNow,
                 createdAt: billing.createdAt,
                 updatedAt: billing.updatedAt,
