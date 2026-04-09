@@ -1756,6 +1756,14 @@ export const getReservationsByGuest = async (req, res) => {
           reservationPeriod = "past";
         }
 
+        const nonCancellableStatuses = [
+          "checked_in",
+          "checked_out",
+          "cancelled",
+          "expired",
+          "no_show",
+        ];
+
         return {
           // Reservation Details
           reservation: {
@@ -1869,9 +1877,8 @@ export const getReservationsByGuest = async (req, res) => {
           },
 
           // Can Cancel/Modify flags
-          canCancel:
-            ["pending", "confirmed"].includes(reservation.status) &&
-            reservationPeriod === "upcoming",
+          // Cancel is allowed as long as reservation has not been checked in yet.
+          canCancel: !nonCancellableStatuses.includes(reservation.status),
           canModify:
             ["pending", "confirmed"].includes(reservation.status) &&
             reservationPeriod === "upcoming",
