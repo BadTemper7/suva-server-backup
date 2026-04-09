@@ -1,6 +1,7 @@
 import DiscountImg from "../models/DiscountImage.js";
 import Billing from "../models/Billing.js";
 import ReservationModels from "../models/Reservation.js";
+import Discount from "../models/Discount.js";
 import cloudinary from "../config/cloudinary.js";
 import mongoose from "mongoose";
 import PaymentOption from "../models/PaymentOption.js";
@@ -115,8 +116,12 @@ export const rejectDiscountImage = async (req, res) => {
 
     await discountImage.save();
 
+    if (discountImage.billingId) {
+      await applyDiscountsToBilling(discountImage.billingId);
+    }
+
     return res.status(200).json({
-      message: "Discount image rejected",
+      message: "Discount image rejected and billing updated",
       discountImage,
     });
   } catch (error) {
@@ -176,10 +181,49 @@ const applyDiscountsToBilling = async (billingId) => {
   let totalDiscountAmount = 0;
   const discountedRooms = new Set();
 
+  const resDiscId = reservation.discountId;
+  if (resDiscId) {
+    const resDiscount = await Discount.findById(resDiscId).lean();
+    if (resDiscount?.isActive && resDiscount.isPerId) {
+      const totalPax = Math.max(
+        1,
+        Number(reservation.adults || 0) + Number(reservation.children || 0),
+      );
+      const declared = Math.min(
+        Math.max(
+          0,
+          Number(reservation.seniorCitizenCount || 0) +
+            Number(reservation.pwdCount || 0),
+        ),
+        totalPax,
+      );
+      const maxCap =
+        resDiscount.maxRoomCount != null
+          ? Math.min(declared, resDiscount.maxRoomCount)
+          : declared;
+      const rid = String(resDiscId);
+      const confirmedCount = confirmedDiscountImages.filter((img) => {
+        const did = img.discountId?._id || img.discountId;
+        return did && String(did) === rid;
+      }).length;
+      const n = Math.min(maxCap, confirmedCount);
+      const pct = Number(resDiscount.discountPercent || 20) / 100;
+      totalDiscountAmount += Math.floor((subTotal / totalPax) * pct * n);
+    }
+  }
+
   // Apply discounts
   for (const dImg of confirmedDiscountImages) {
     const discount = dImg.discountId;
     if (!discount || !discount.isActive) continue;
+
+    if (
+      discount.isPerId &&
+      resDiscId &&
+      String(discount._id || discount) === String(resDiscId)
+    ) {
+      continue;
+    }
 
     let eligibleRooms = roomTotals.filter(
       (r) => !discountedRooms.has(r.reservationRoomId),

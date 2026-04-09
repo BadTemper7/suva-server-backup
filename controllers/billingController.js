@@ -318,12 +318,46 @@ export const updateBillingCalc = async (req, res) => {
     let discountAmount = 0;
     const percent = discount?.discountPercent || 0;
 
-    if (discount && percent > 0) {
+    if (discount && (percent > 0 || discount.isPerId)) {
+      const resDiscountIdStr = reservation.discountId
+        ? String(reservation.discountId)
+        : "";
       const confirmedImgs = discountImg.filter(
         (img) => img.status === "confirmed",
       );
+      const confirmedForSelectedDiscount = resDiscountIdStr
+        ? confirmedImgs.filter(
+            (img) =>
+              img.discountId && String(img.discountId) === resDiscountIdStr,
+          )
+        : [];
+      const totalPax = Math.max(
+        1,
+        Number(reservation.adults || 0) + Number(reservation.children || 0),
+      );
+      const declaredEligible = Math.min(
+        Math.max(
+          0,
+          Number(reservation.seniorCitizenCount || 0) +
+            Number(reservation.pwdCount || 0),
+        ),
+        totalPax,
+      );
+      const maxByDiscount =
+        discount.maxRoomCount != null
+          ? Math.min(declaredEligible, discount.maxRoomCount)
+          : declaredEligible;
+      const validIdCount = Math.min(
+        maxByDiscount,
+        confirmedForSelectedDiscount.length,
+      );
 
-      if (discount.appliesToAllRooms) {
+      if (discount.isPerId) {
+        // (base price / pax) × discount% × min(declared senior+pwd, confirmed IDs, caps)
+        const ratePct = Number(discount.discountPercent || 20) / 100;
+        const basePerPax = subTotal / totalPax;
+        discountAmount = basePerPax * ratePct * validIdCount;
+      } else if (discount.appliesToAllRooms) {
         discountAmount = subTotal * (percent / 100);
       } else if (reservationRoomsTotal.length) {
         const sortedRooms = [...reservationRoomsTotal].sort((a, b) =>
@@ -332,17 +366,7 @@ export const updateBillingCalc = async (req, res) => {
             : b.totalAmount - a.totalAmount,
         );
 
-        if (discount.isPerId) {
-          const count = Math.min(
-            confirmedImgs.length,
-            discount.maxRoomCount || 1,
-          );
-          for (let i = 0; i < count; i++) {
-            discountAmount += sortedRooms[i].totalAmount * (percent / 100);
-          }
-        } else {
-          discountAmount = sortedRooms[0].totalAmount * (percent / 100);
-        }
+        discountAmount = sortedRooms[0].totalAmount * (percent / 100);
       }
     }
 

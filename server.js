@@ -3,6 +3,7 @@ import cors from "cors";
 import dotenv from "dotenv";
 import { connectDB } from "./utils/db.js";
 import User from "./models/userModel.js";
+import Discount from "./models/Discount.js";
 import { legacyReceptionistPermissions } from "./config/receptionistPermissions.js";
 import { initScheduler, runJobsNow } from "./jobs/scheduler.js";
 import { startAutoUnlockJob } from "./jobs/autoUnlockAccounts.js";
@@ -84,6 +85,31 @@ async function backfillReceptionistPermissions() {
     );
   }
 }
+
+async function ensureDefaultDiscountTypes() {
+  const defaults = [
+    {
+      name: "PWD / Senior Citizen",
+      discountPercent: 20,
+      isActive: true,
+      isPerId: true,
+      appliesToAllRooms: true,
+      maxRoomCount: null,
+      discountPriority: "highest",
+    },
+  ];
+
+  for (const def of defaults) {
+    const existing = await Discount.findOne({ name: def.name }).lean();
+    if (!existing) {
+      await Discount.create(def);
+      console.log(`✅ Default discount created: ${def.name} (${def.discountPercent}%)`);
+    } else {
+      console.log(`✅ Default discount already exists: ${def.name}`);
+    }
+  }
+}
+
 process.env.TZ = "Asia/Manila";
 console.log("Server Timezone:", new Date().toString());
 async function startServer() {
@@ -95,6 +121,7 @@ async function startServer() {
 
   await ensureSuperAdmin(); // ✅ called after DB is connected
   await backfillReceptionistPermissions();
+  await ensureDefaultDiscountTypes();
 
   // Initialize all scheduled jobs
   initScheduler();

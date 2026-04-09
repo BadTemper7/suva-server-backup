@@ -139,6 +139,8 @@ export const addReservation = async (req, res) => {
       status: reqStatus = "pending",
       userId,
       discountId,
+      seniorCitizenCount: rawSenior = 0,
+      pwdCount: rawPwd = 0,
     } = req.body;
 
     // Basic validation
@@ -258,6 +260,18 @@ export const addReservation = async (req, res) => {
         .status(400)
         .json({ error: "Reservation must be at least 1 night" });
 
+    const adultCount = Number(adults);
+    const childCount = Number(children) || 0;
+    const totalPaxForDiscount = adultCount + childCount;
+    let seniorCitizenCount = Math.max(0, Math.floor(Number(rawSenior) || 0));
+    let pwdCount = Math.max(0, Math.floor(Number(rawPwd) || 0));
+    if (seniorCitizenCount + pwdCount > totalPaxForDiscount) {
+      return res.status(400).json({
+        error:
+          "Senior citizen + PWD count cannot exceed total guests (adults + children).",
+      });
+    }
+
     const paymentOptionDoc = await PaymentOption.findById(paymentOption);
     if (!paymentOptionDoc || !paymentOptionDoc.isActive)
       return res
@@ -286,8 +300,10 @@ export const addReservation = async (req, res) => {
         reservationNumber,
         checkIn: inDate,
         checkOut: outDate,
-        adults: Number(adults),
-        children: Number(children),
+        adults: adultCount,
+        children: childCount,
+        seniorCitizenCount,
+        pwdCount,
         guestId: finalGuestId,
         notes,
         paymentOption: paymentOptionDoc._id,
@@ -1765,6 +1781,51 @@ export const getReservationsByGuest = async (req, res) => {
           "no_show",
         ];
 
+        const seniorPwdDeclared =
+          Number(reservation.seniorCitizenCount ?? 0) +
+          Number(reservation.pwdCount ?? 0);
+
+        /** Discount ID uploads for this guest's booking (image URL = own proof only). */
+        let discountProofs = [];
+        if (billing?._id) {
+          try {
+            const proofDocs = await DiscountImage.find({
+              billingId: billing._id,
+            })
+              .populate("discountId", "name")
+              .sort({ createdAt: 1 })
+              .select(
+                "status rejectionReason reviewedAt discountId createdAt url",
+              )
+              .lean();
+            discountProofs = proofDocs.map((img, idx) => ({
+              label: `ID proof ${idx + 1}`,
+              status: img.status,
+              url: img.url || null,
+              discountName: img.discountId?.name || null,
+              rejectionReason:
+                img.status === "rejected"
+                  ? img.rejectionReason?.trim() || null
+                  : null,
+              reviewedAt: img.reviewedAt || null,
+            }));
+          } catch (proofErr) {
+            console.log(
+              `Error fetching discount proofs for billing ${billing._id}:`,
+              proofErr.message,
+            );
+          }
+        }
+        const discountProofSummary = {
+          total: discountProofs.length,
+          confirmed: discountProofs.filter((p) => p.status === "confirmed")
+            .length,
+          pending: discountProofs.filter((p) => p.status === "pending")
+            .length,
+          rejected: discountProofs.filter((p) => p.status === "rejected")
+            .length,
+        };
+
         return {
           // Reservation Details
           reservation: {
@@ -1774,6 +1835,8 @@ export const getReservationsByGuest = async (req, res) => {
             checkOut: reservation.checkOut,
             adults: reservation.adults,
             children: reservation.children,
+            seniorCitizenCount: reservation.seniorCitizenCount ?? 0,
+            pwdCount: reservation.pwdCount ?? 0,
             nights: reservation.nights,
             status: reservation.status,
             notes: reservation.notes,
@@ -1808,6 +1871,9 @@ export const getReservationsByGuest = async (req, res) => {
                 discountPercent: reservation.discountId.discountPercent,
                 discountAmount: reservation.discountId.discountAmount,
                 appliesToAllRooms: reservation.discountId.appliesToAllRooms,
+                isPerId:
+                  !!reservation.discountId.isPerId ||
+                  seniorPwdDeclared > 0,
               }
             : null,
 
@@ -1847,6 +1913,10 @@ export const getReservationsByGuest = async (req, res) => {
                 updatedAt: billing.updatedAt,
               }
             : null,
+
+          // Discount ID uploads — review status for guest (matches admin discount images)
+          discountProofs,
+          discountProofSummary,
 
           // Receipt Details
           receipts: receipts.map((receipt) => ({

@@ -48,6 +48,9 @@ const reservationSchema = new Schema(
 
     adults: { type: Number, required: true, min: 1 },
     children: { type: Number, default: 0, min: 0 },
+    /** For PWD/Senior per-ID discount: declared counts (validated vs total pax on save). */
+    seniorCitizenCount: { type: Number, default: 0, min: 0 },
+    pwdCount: { type: Number, default: 0, min: 0 },
 
     guestId: { type: Schema.Types.ObjectId, ref: "Guest", required: true },
     notes: { type: String, default: "" },
