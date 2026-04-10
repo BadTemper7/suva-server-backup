@@ -30,6 +30,8 @@ const billingSchema = new mongoose.Schema(
       index: true,
     },
     refundAmount: { type: Number, default: 0, min: 0 },
+    refundedAt: { type: Date, default: null },
+    refundReason: { type: String, default: "" },
     isRefundable: { type: Boolean, default: false },
     isComplimentary: { type: Boolean, default: false, index: true },
     amountDueNow: { type: Number, default: 0, min: 0 },

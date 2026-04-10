@@ -288,11 +288,14 @@ export const updateBillingCalc = async (req, res) => {
       calcNights(reservation.checkIn, reservation.checkOut),
     );
 
-    // Total amount paid
-    const amountPaid = receipts.reduce(
+    // Total amount paid from receipts — unless a refund was already applied (amountPaid is authoritative)
+    const receiptPaid = receipts.reduce(
       (sum, r) => (r.status === "confirmed" ? sum + r.amountPaid : sum),
       0,
     );
+    const amountPaid = billing.refundedAt
+      ? Number(billing.amountPaid || 0)
+      : receiptPaid;
 
     // Per room totals + subtotal
     let subTotal = 0;
@@ -405,6 +408,10 @@ export const updateBillingCalc = async (req, res) => {
       }
     } else {
       status = "unpaid";
+      isRefundable = false;
+    }
+
+    if (billing.refundedAt) {
       isRefundable = false;
     }
 
@@ -1667,19 +1674,24 @@ export const processRefund = async (req, res) => {
       return res.status(400).json({ error: "Billing ID is required" });
     }
 
-    const billing = await Billing.findById(billingId)
-      .populate("reservationId")
-      .populate("receipts");
+    const billing = await Billing.findById(billingId);
 
     if (!billing) {
       return res.status(404).json({ error: "Billing not found" });
     }
 
-    // Check if billing is already refunded
+    // Policy refund already recorded (status + refundedAt guard below)
     if (billing.status === "refunded") {
       return res
         .status(400)
         .json({ error: "This billing has already been refunded" });
+    }
+
+    // One policy refund per billing (same as when full refund always set status refunded)
+    if (billing.refundedAt) {
+      return res.status(400).json({
+        error: "A refund has already been processed for this billing",
+      });
     }
 
     // Check if there's any payment to refund
@@ -1689,8 +1701,21 @@ export const processRefund = async (req, res) => {
         .json({ error: "No payment has been made to refund" });
     }
 
-    // Calculate refund amount (50% of amount paid)
-    const calculatedRefundAmount = refundAmount || billing.amountPaid * 0.5;
+    const totalAmount = Number(billing.totalAmount || 0);
+
+    // Same policy as full settlement: default 50% of amount currently paid (partial or paid).
+    const requestedRefund =
+      refundAmount != null && refundAmount !== ""
+        ? Number(refundAmount)
+        : billing.amountPaid * 0.5;
+    const calculatedRefundAmount = requestedRefund;
+
+    if (
+      Number.isNaN(calculatedRefundAmount) ||
+      calculatedRefundAmount <= 0
+    ) {
+      return res.status(400).json({ error: "Invalid refund amount" });
+    }
 
     if (calculatedRefundAmount > billing.amountPaid) {
       return res
@@ -1698,37 +1723,55 @@ export const processRefund = async (req, res) => {
         .json({ error: "Refund amount cannot exceed amount paid" });
     }
 
-    // Store the refund amount before updating
     const refundedAmount = calculatedRefundAmount;
     const previousAmountPaid = billing.amountPaid;
+    const newAmountPaid = Math.max(0, previousAmountPaid - refundedAmount);
+    const newBalance = Math.max(0, totalAmount - newAmountPaid);
 
-    // Update billing status to refunded
-    billing.status = "refunded";
-    billing.refundAmount = refundedAmount;
-    billing.refundedAt = new Date();
-    billing.refundReason = reason || "Refund processed by admin";
+    // Always mark as refunded once a policy refund runs (incl. partial payment: guest got 50% back, hotel retains the rest on billing).
+    const nextStatus = "refunded";
+    const nextIsRefundable = false;
 
-    // Update amount paid and balance
-    const newAmountPaid = previousAmountPaid - refundedAmount;
-    billing.amountPaid = Math.max(0, newAmountPaid);
-    billing.balance = billing.totalAmount - billing.amountPaid;
+    const refundedAt = new Date();
+    const refundReason = reason || "Refund processed by admin";
 
-    // Set isRefundable to false since it's now refunded
-    billing.isRefundable = false;
-
-    await billing.save();
+    // findByIdAndUpdate avoids Billing pre-save rewriting status while status is "refunded".
+    const updated = await Billing.findByIdAndUpdate(
+      billing._id,
+      {
+        $set: {
+          status: nextStatus,
+          refundAmount: refundedAmount,
+          refundedAt,
+          refundReason,
+          amountPaid: newAmountPaid,
+          balance: newBalance,
+          isRefundable: nextIsRefundable,
+        },
+      },
+      { new: true },
+    )
+      .populate({
+        path: "reservationId",
+        populate: [
+          { path: "guestId", model: "Guest" },
+          { path: "paymentOption", model: "PaymentOption" },
+        ],
+      })
+      .populate("receipts");
 
     return res.status(200).json({
       success: true,
       message: `Refund of ${formatMoney(refundedAmount)} processed successfully`,
       refund: {
         amount: refundedAmount,
-        refundedAt: billing.refundedAt,
+        refundedAt,
         previousAmountPaid,
-        remainingBalance: billing.balance,
-        amountPaid: billing.amountPaid,
+        remainingBalance: newBalance,
+        amountPaid: newAmountPaid,
+        status: nextStatus,
       },
-      billing,
+      billing: updated,
     });
   } catch (error) {
     console.error("Refund processing error:", error);

@@ -534,16 +534,24 @@ export const getPaymentReport = async (req, res) => {
   }
 };
 
+// Refund rows in range: prefer refundedAt (actual refund time), fall back to updatedAt for legacy data
+const refundReportBillingFilter = (start, end) => ({
+  status: "refunded",
+  $expr: {
+    $and: [
+      { $gte: [{ $ifNull: ["$refundedAt", "$updatedAt"] }, start] },
+      { $lte: [{ $ifNull: ["$refundedAt", "$updatedAt"] }, end] },
+    ],
+  },
+});
+
 // 6. Refund Report
 export const getRefundReport = async (req, res) => {
   try {
     const { period, startDate, endDate } = req.query;
     const { start, end } = getDateRange(period, startDate, endDate);
 
-    const billings = await Billing.find({
-      updatedAt: { $gte: start, $lte: end },
-      status: "refunded",
-    })
+    const billings = await Billing.find(refundReportBillingFilter(start, end))
       .populate({
         path: "reservationId",
         populate: {
@@ -555,7 +563,7 @@ export const getRefundReport = async (req, res) => {
         path: "receipts",
         match: { status: "confirmed" },
       })
-      .sort({ updatedAt: -1 });
+      .sort({ refundedAt: -1, updatedAt: -1 });
 
     const totals = billings.reduce(
       (acc, billing) => {
@@ -572,16 +580,22 @@ export const getRefundReport = async (req, res) => {
       period,
       dateRange: { start, end },
       totals,
-      refunds: billings.map((billing) => ({
-        billingNumber: billing.billingNumber,
-        reservationNumber: billing.reservationId?.reservationNumber,
-        guest: billing.reservationId?.guestId,
-        originalAmount: billing.totalAmount,
-        refundAmount: billing.refundAmount,
-        refundedAt: billing.updatedAt,
-        receipts: billing.receipts,
-        notes: billing.notes,
-      })),
+      refunds: billings.map((billing) => {
+        const refundedAt = billing.refundedAt || billing.updatedAt;
+        return {
+          billingNumber: billing.billingNumber,
+          reservationNumber: billing.reservationId?.reservationNumber,
+          guest: billing.reservationId?.guestId,
+          originalAmount: billing.totalAmount,
+          refundAmount: billing.refundAmount,
+          refundedAt,
+          amountPaidAfterRefund: billing.amountPaid,
+          balanceAfterRefund: billing.balance,
+          refundReason: billing.refundReason || "",
+          receipts: billing.receipts,
+          notes: billing.notes,
+        };
+      }),
     });
   } catch (error) {
     res.status(500).json({
@@ -596,8 +610,12 @@ export const getRefundReport = async (req, res) => {
 export const getOutstandingBalanceReport = async (req, res) => {
   try {
     const billings = await Billing.find({
-      status: { $in: ["unpaid", "partial"] },
       balance: { $gt: 0 },
+      $or: [
+        { status: { $in: ["unpaid", "partial"] } },
+        // Policy refund on partial payment: status refunded but credit remains on file
+        { status: "refunded", amountPaid: { $gt: 0 } },
+      ],
     })
       .populate({
         path: "reservationId",
@@ -1025,10 +1043,7 @@ const getRefundsReportData = async (params, fmt) => {
   const { period, startDate, endDate } = params;
   const { start, end } = getDateRange(period, startDate, endDate);
 
-  const billings = await Billing.find({
-    updatedAt: { $gte: start, $lte: end },
-    status: "refunded",
-  })
+  const billings = await Billing.find(refundReportBillingFilter(start, end))
     .populate({
       path: "reservationId",
       populate: {
@@ -1040,7 +1055,7 @@ const getRefundsReportData = async (params, fmt) => {
       path: "receipts",
       match: { status: "confirmed" },
     })
-    .sort({ updatedAt: -1 });
+    .sort({ refundedAt: -1, updatedAt: -1 });
 
   return {
     columns: [
@@ -1049,27 +1064,39 @@ const getRefundsReportData = async (params, fmt) => {
       { header: "Guest Name", key: "guestName", width: 20 },
       { header: "Original Amount", key: "originalAmount", width: 15 },
       { header: "Refund Amount", key: "refundAmount", width: 15 },
+      { header: "Paid After Refund", key: "amountPaidAfterRefund", width: 16 },
+      { header: "Balance", key: "balanceAfterRefund", width: 14 },
       { header: "Refund Date", key: "refundDate", width: 20 },
+      { header: "Reason", key: "refundReason", width: 28 },
       { header: "Notes", key: "notes", width: 30 },
     ],
-    rows: billings.map((billing) => ({
-      billingNumber: billing.billingNumber || "N/A",
-      reservationNumber: billing.reservationId?.reservationNumber || "N/A",
-      guestName: billing.reservationId?.guestId
-        ? `${billing.reservationId.guestId.firstName} ${billing.reservationId.guestId.lastName}`
-        : "N/A",
-      originalAmount: billing.totalAmount || 0,
-      refundAmount: billing.refundAmount || 0,
-      refundDate: formatExportDateTime(billing.updatedAt, fmt),
-      notes: billing.notes || "",
-    })),
+    rows: billings.map((billing) => {
+      const refundEventAt = billing.refundedAt || billing.updatedAt;
+      return {
+        billingNumber: billing.billingNumber || "N/A",
+        reservationNumber: billing.reservationId?.reservationNumber || "N/A",
+        guestName: billing.reservationId?.guestId
+          ? `${billing.reservationId.guestId.firstName} ${billing.reservationId.guestId.lastName}`
+          : "N/A",
+        originalAmount: billing.totalAmount || 0,
+        refundAmount: billing.refundAmount || 0,
+        amountPaidAfterRefund: billing.amountPaid || 0,
+        balanceAfterRefund: billing.balance || 0,
+        refundDate: formatExportDateTime(refundEventAt, fmt),
+        refundReason: (billing.refundReason || "").trim(),
+        notes: billing.notes || "",
+      };
+    }),
   };
 };
 
 const getOutstandingReportData = async (params, fmt) => {
   const billings = await Billing.find({
-    status: { $in: ["unpaid", "partial"] },
     balance: { $gt: 0 },
+    $or: [
+      { status: { $in: ["unpaid", "partial"] } },
+      { status: "refunded", amountPaid: { $gt: 0 } },
+    ],
   })
     .populate({
       path: "reservationId",
