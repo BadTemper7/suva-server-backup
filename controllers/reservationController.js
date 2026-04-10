@@ -1948,8 +1948,12 @@ export const getReservationsByGuest = async (req, res) => {
           },
 
           // Can Cancel/Modify flags
-          // Cancel is allowed as long as reservation has not been checked in yet.
-          canCancel: !nonCancellableStatuses.includes(reservation.status),
+          // Cancel: not in a terminal state, and not "pending + unpaid" (guest must pay or wait for confirmation flow).
+          canCancel:
+            !nonCancellableStatuses.includes(reservation.status) &&
+            !(
+              reservation.status === "pending" && paymentStatus === "unpaid"
+            ),
           canModify:
             ["pending", "confirmed"].includes(reservation.status) &&
             reservationPeriod === "upcoming",

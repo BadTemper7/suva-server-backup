@@ -7,6 +7,58 @@ import ReservationModels from "../models/Reservation.js";
 const { Reservation, ReservationRoom } = ReservationModels;
 
 /**
+ * When confirmed receipts cover the bill (full total or minimum due now),
+ * promote reservation from pending → confirmed. Uses receipt sums so it works
+ * even if billing.amountPaid is not recalculated yet.
+ */
+async function tryConfirmReservationFromBillingPayments(billingId) {
+  if (!billingId) return { updated: false };
+  const id =
+    typeof billingId === "string"
+      ? billingId
+      : billingId._id?.toString?.() || billingId.toString?.();
+  if (!id || !mongoose.Types.ObjectId.isValid(id)) return { updated: false };
+
+  const billing = await Billing.findById(id);
+  if (!billing?.reservationId) return { updated: false };
+  if (billing.status === "refunded" || billing.status === "voided") {
+    return { updated: false };
+  }
+
+  const reservation = await Reservation.findById(billing.reservationId);
+  if (!reservation || reservation.status !== "pending") {
+    return { updated: false };
+  }
+
+  const confirmed = await Receipt.find({
+    billingId: id,
+    status: "confirmed",
+  });
+  const totalPaid = confirmed.reduce(
+    (sum, r) => sum + Number(r.amountPaid || 0),
+    0,
+  );
+  const totalAmount = Number(billing.totalAmount || 0);
+  const amountDueNow = Number(billing.amountDueNow || 0);
+
+  const fullyPaid = totalAmount > 0 && totalPaid >= totalAmount;
+  const depositMet = amountDueNow > 0 && totalPaid >= amountDueNow;
+
+  if (!fullyPaid && !depositMet) {
+    return { updated: false };
+  }
+
+  reservation.status = "confirmed";
+  await reservation.save();
+
+  return {
+    updated: true,
+    reservation,
+    previousStatus: "pending",
+  };
+}
+
+/**
  * Upload buffer to Cloudinary using upload_stream
  */
 const uploadBufferToCloudinary = (buffer, folder) => {
@@ -25,7 +77,7 @@ const uploadBufferToCloudinary = (buffer, folder) => {
 /* -------------------- UPDATE RECEIPT STATUS -------------------- */
 export const updateReceiptStatus = async (req, res) => {
   try {
-    const { status, reservationId, reason } = req.body;
+    const { status, reason } = req.body;
     const validStatuses = ["pending", "confirmed", "rejected"];
 
     if (!status || !validStatuses.includes(status)) {
@@ -62,33 +114,19 @@ export const updateReceiptStatus = async (req, res) => {
     let updatedReservation = null;
     let reservationStatusUpdate = null;
 
-    // IF STATUS IS CONFIRMED AND RESERVATION ID IS PROVIDED, UPDATE RESERVATION STATUS
-    if (status === "confirmed" && reservationId) {
-      // Find and update the reservation
-      const reservation = await Reservation.findById(reservationId);
-
-      if (reservation) {
-        const previousReservationStatus = reservation.status;
-
-        // Update reservation to confirmed if not already
-        if (previousReservationStatus !== "confirmed") {
-          reservation.status = "confirmed";
-          await reservation.save();
-          updatedReservation = reservation;
-          reservationStatusUpdate = {
-            from: previousReservationStatus,
-            to: "confirmed",
-            receiptId: receipt._id,
-          };
-
-          console.log(
-            `✅ Reservation ${reservation._id} (${reservation.reservationNumber}) status updated from ${previousReservationStatus} to confirmed`,
-          );
-        } else {
-          console.log(`ℹ️ Reservation ${reservation._id} already confirmed`);
-        }
-      } else {
-        console.log(`❌ Reservation not found for ID: ${reservationId}`);
+    if (status === "confirmed") {
+      const billingRef = receipt.billingId?._id || receipt.billingId;
+      const sync = await tryConfirmReservationFromBillingPayments(billingRef);
+      if (sync.updated && sync.reservation) {
+        updatedReservation = sync.reservation;
+        reservationStatusUpdate = {
+          from: sync.previousStatus,
+          to: "confirmed",
+          receiptId: receipt._id,
+        };
+        console.log(
+          `✅ Reservation ${sync.reservation._id} (${sync.reservation.reservationNumber}) confirmed after receipt payment threshold met`,
+        );
       }
     }
 
@@ -247,16 +285,29 @@ export const createReceipt = async (req, res) => {
 
     await receipt.save();
 
+    let reservationSync = { updated: false };
+    if (status === "confirmed") {
+      reservationSync = await tryConfirmReservationFromBillingPayments(
+        billingId,
+      );
+    }
+
     const paymentTypeName = paymentTypeDoc?.name || "Payment Type";
     const createdBy = isAdminAction ? "Admin" : "User";
 
     await createNotification({
       actorUserId: req.user?._id || null,
       type: "billing",
-      title: "New Receipt Created",
-      description: `A receipt was created by ${createdBy} for billing ${billing.billingNumber}. Payment: ${paymentTypeName}. Amount paid: ${paid}. Status: ${status}.${
+      title: reservationSync.updated
+        ? "New Receipt Created & Reservation Confirmed"
+        : "New Receipt Created",
+      description: `A receipt was created by ${createdBy} for billing ${billing.billingNumber}. Payment: ${paymentTypeName}. Amount paid: ${paid}. Amount received: ${received}${change > 0 ? `. Change: ${change}` : ""}. Status: ${status}.${
         referenceNumber ? ` Ref: ${referenceNumber}` : ""
-      }${receiptImages.length > 0 ? " (with image)" : ""}`,
+      }${receiptImages.length > 0 ? " (with image)" : ""}${
+        reservationSync.updated && reservationSync.reservation
+          ? ` Reservation ${reservationSync.reservation.reservationNumber} confirmed.`
+          : ""
+      }`,
       source: "Billing",
       entity: { kind: "Receipt", id: receipt._id },
     });
@@ -268,6 +319,14 @@ export const createReceipt = async (req, res) => {
       requiresReceipt,
       hasImage: receiptImages.length > 0,
       referenceNumber: referenceNumber || null,
+      reservationUpdated: reservationSync.updated,
+      updatedReservation: reservationSync.updated
+        ? {
+            _id: reservationSync.reservation._id,
+            reservationNumber: reservationSync.reservation.reservationNumber,
+            status: reservationSync.reservation.status,
+          }
+        : null,
     });
   } catch (error) {
     console.error(error);
@@ -307,6 +366,10 @@ export const confirmReceipt = async (req, res) => {
     receipt.status = "confirmed";
     await receipt.save();
 
+    const billingRef = receipt.billingId?._id || receipt.billingId;
+    const reservationSync =
+      await tryConfirmReservationFromBillingPayments(billingRef);
+
     const billingNumber =
       receipt.billingId?.billingNumber || receipt.billingId?._id?.toString?.();
     const paymentTypeName = receipt.paymentType?.name || "Payment Type";
@@ -314,19 +377,35 @@ export const confirmReceipt = async (req, res) => {
     await createNotification({
       actorUserId: req.user?._id || null,
       type: "billing",
-      title: "Receipt Confirmed",
+      title: reservationSync.updated
+        ? "Receipt Confirmed & Reservation Confirmed"
+        : "Receipt Confirmed",
       description: `Receipt for billing ${
         billingNumber || "N/A"
       } (${paymentTypeName}) was confirmed (from ${previousStatus}).${
         receipt.referenceNumber ? ` Ref: ${receipt.referenceNumber}` : ""
-      }${receipt.receiptImages?.length > 0 ? " (with image)" : ""}`,
+      }${receipt.receiptImages?.length > 0 ? " (with image)" : ""}${
+        reservationSync.updated && reservationSync.reservation
+          ? ` Reservation ${reservationSync.reservation.reservationNumber} is now confirmed.`
+          : ""
+      }`,
       source: "Billing",
       entity: { kind: "Receipt", id: receipt._id },
     });
 
     return res.json({
-      message: "Receipt confirmed",
+      message: reservationSync.updated
+        ? `Receipt confirmed; reservation ${reservationSync.reservation?.reservationNumber} confirmed`
+        : "Receipt confirmed",
       receipt,
+      reservationUpdated: reservationSync.updated,
+      updatedReservation: reservationSync.updated
+        ? {
+            _id: reservationSync.reservation._id,
+            reservationNumber: reservationSync.reservation.reservationNumber,
+            status: reservationSync.reservation.status,
+          }
+        : null,
     });
   } catch (error) {
     console.error(error);
@@ -651,10 +730,30 @@ export const confirmMultipleReceipts = async (req, res) => {
       _id: { $in: idsToConfirm },
     }).populate("paymentType billingId");
 
+    const uniqueBillingIds = [
+      ...new Set(
+        Object.keys(billingMap).filter((id) =>
+          mongoose.Types.ObjectId.isValid(id),
+        ),
+      ),
+    ];
+    const reservationsConfirmed = [];
+    for (const bid of uniqueBillingIds) {
+      const sync = await tryConfirmReservationFromBillingPayments(bid);
+      if (sync.updated && sync.reservation) {
+        reservationsConfirmed.push({
+          _id: sync.reservation._id,
+          reservationNumber: sync.reservation.reservationNumber,
+          status: sync.reservation.status,
+        });
+      }
+    }
+
     return res.json({
       message: `${updateResult.modifiedCount} receipt(s) confirmed successfully`,
       modifiedCount: updateResult.modifiedCount,
       receipts: updatedReceipts,
+      reservationsConfirmed,
     });
   } catch (error) {
     console.error("Bulk confirm error:", error);
