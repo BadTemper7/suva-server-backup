@@ -9,12 +9,21 @@ import {
   addAddOnsToRoom,
   removeAddOnsFromRoom,
   updateAddOnQuantity,
+  transferReservationRoom,
 } from "../controllers/reservationRoomController.js";
+import { protect, receptionistOrAdmin } from "../middleware/authMiddleware.js";
 
 const router = express.Router();
 
 // Get rooms by reservation ID
 router.get("/:reservationId/", getRoomsByReservationId);
+
+router.post(
+  "/:reservationRoomId/transfer",
+  protect,
+  receptionistOrAdmin,
+  transferReservationRoom,
+);
 
 // Add multiple rooms to a reservation
 router.post("/", addReservationRooms);

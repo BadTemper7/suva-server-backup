@@ -19,6 +19,7 @@ import {
   formatExportDateTime,
   formatExportFilenameDate,
 } from "../utils/reportExportFormatting.js";
+import { stayTypeLabel } from "../utils/stayPricing.js";
 const { Reservation, ReservationRoom } = ReservationModel;
 // Helper function to generate date ranges
 const getDateRange = (period, startDate, endDate) => {
@@ -491,7 +492,7 @@ export const getPaymentReport = async (req, res) => {
         select: "billingNumber",
         populate: {
           path: "reservationId",
-          select: "reservationNumber",
+          select: "reservationNumber stayType hourlyDuration",
           populate: {
             path: "guestId",
             select: "firstName lastName",
@@ -995,7 +996,7 @@ const getPaymentsReportData = async (params, fmt) => {
       select: "billingNumber",
       populate: {
         path: "reservationId",
-        select: "reservationNumber",
+        select: "reservationNumber stayType hourlyDuration",
         populate: {
           path: "guestId",
           select: "firstName lastName",
@@ -1013,6 +1014,7 @@ const getPaymentsReportData = async (params, fmt) => {
       { header: "Receipt ID", key: "receiptId", width: 20 },
       { header: "Billing No.", key: "billingNumber", width: 15 },
       { header: "Reservation No.", key: "reservationNumber", width: 15 },
+      { header: "Stay Type", key: "stayType", width: 18 },
       { header: "Guest Name", key: "guestName", width: 20 },
       { header: "Payment Method", key: "paymentMethod", width: 20 },
       { header: "Amount Paid", key: "amountPaid", width: 15 },
@@ -1026,6 +1028,7 @@ const getPaymentsReportData = async (params, fmt) => {
       billingNumber: receipt.billingId?.billingNumber || "N/A",
       reservationNumber:
         receipt.billingId?.reservationId?.reservationNumber || "N/A",
+      stayType: stayTypeLabel(receipt.billingId?.reservationId),
       guestName: receipt.billingId?.reservationId?.guestId
         ? `${receipt.billingId.reservationId.guestId.firstName} ${receipt.billingId.reservationId.guestId.lastName}`
         : "N/A",

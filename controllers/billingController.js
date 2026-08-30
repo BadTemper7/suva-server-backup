@@ -8,6 +8,9 @@ import mongoose from "mongoose";
 import Receipt from "../models/Receipt.js";
 import Discount from "../models/Discount.js";
 import PaymentOption from "../models/PaymentOption.js";
+import { getRoomStayCharge } from "../utils/stayPricing.js";
+import { buildInvoicePdfBuffer } from "../utils/invoicePdf.js";
+import { sendInvoiceEmail } from "../config/email.js";
 
 import PDFDocument from "pdfkit";
 import fs from "fs";
@@ -31,42 +34,6 @@ const isComplimentaryReservation = (reservation) => {
   const noteText = String(reservation.notes || "").toLowerCase();
   return noteText.includes("complimentary reservation");
 };
-
-const calcNights = (checkIn, checkOut) => {
-  const inDate = new Date(checkIn);
-  const outDate = new Date(checkOut);
-  if (Number.isNaN(inDate.getTime()) || Number.isNaN(outDate.getTime()))
-    return 0;
-  return Math.floor((outDate - inDate) / (1000 * 60 * 60 * 24));
-};
-// Helper function to calculate room + amenity subtotal
-async function calculateSubTotal(reservationId) {
-  const reservationRooms = await ReservationRoom.find({ reservationId })
-    .populate("roomId")
-    .populate({
-      path: "addOns.addOnId",
-      model: "AddOn",
-    });
-
-  let subTotal = 0;
-
-  for (const resRoom of reservationRooms) {
-    // Room rate * nights
-    const roomRate = resRoom.roomId?.rate || 0;
-    subTotal += roomRate;
-
-    // Add add-ons
-    if (resRoom.addOns && resRoom.addOns.length > 0) {
-      for (const addOn of resRoom.addOns) {
-        const addOnRate = addOn.addOnId?.rate || 0;
-        const quantity = addOn.quantity || 0;
-        subTotal += addOnRate * quantity;
-      }
-    }
-  }
-
-  return subTotal;
-}
 
 // Generate or update billing for a reservation
 export const generateBilling = async (req, res) => {
@@ -92,8 +59,7 @@ export const generateBilling = async (req, res) => {
     // Calculate subtotal
     let subTotal = 0;
     reservationRooms.forEach((resRoom) => {
-      const roomRate = resRoom.roomId?.rate || 0;
-      subTotal += roomRate;
+      subTotal += getRoomStayCharge(resRoom.roomId, reservation);
 
       if (resRoom.addOns && resRoom.addOns.length > 0) {
         resRoom.addOns.forEach((a) => {
@@ -195,6 +161,45 @@ export const getBillingById = async (req, res) => {
   }
 };
 
+export const streamInvoicePdf = async (req, res) => {
+  try {
+    const { billingId } = req.params;
+    const download = String(req.query.download || "") === "1";
+    const { buffer, filename } = await buildInvoicePdfBuffer(billingId);
+
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader(
+      "Content-Disposition",
+      `${download ? "attachment" : "inline"}; filename="${filename}"`,
+    );
+    return res.send(buffer);
+  } catch (error) {
+    const status = error.status || 500;
+    if (status === 500) console.error("Invoice PDF error:", error);
+    return res.status(status).json({ error: error.message });
+  }
+};
+
+export const emailInvoicePdf = async (req, res) => {
+  try {
+    const { billingId } = req.params;
+    const result = await sendInvoiceEmail(billingId);
+    if (!result.success) {
+      return res
+        .status(400)
+        .json({ error: result.error || "Failed to email invoice" });
+    }
+    return res.status(200).json({
+      message: "Invoice emailed to guest",
+      filename: result.filename,
+    });
+  } catch (error) {
+    const status = error.status || 500;
+    if (status === 500) console.error("Invoice email error:", error);
+    return res.status(status).json({ error: error.message });
+  }
+};
+
 // Get all billings
 export const getBillings = async (req, res) => {
   try {
@@ -283,10 +288,10 @@ export const updateBillingCalc = async (req, res) => {
         Receipt.find({ billingId }),
       ]);
 
-    const nights = Math.max(
-      1,
-      calcNights(reservation.checkIn, reservation.checkOut),
-    );
+    const nights =
+      reservation.stayType === "hourly"
+        ? 0
+        : Math.max(1, Number(reservation.nights) || 1);
 
     // Total amount paid from receipts — unless a refund was already applied (amountPaid is authoritative)
     const receiptPaid = receipts.reduce(
@@ -301,7 +306,7 @@ export const updateBillingCalc = async (req, res) => {
     let subTotal = 0;
     const reservationRoomsTotal = reservationRooms.map((room) => {
       const r = room.toObject();
-      const roomRateTotal = r.roomId.rate * nights;
+      const roomRateTotal = getRoomStayCharge(r.roomId, reservation);
       const addOnsTotal = r.addOns.reduce(
         (sum, a) => sum + a.quantity * a.addOnId.rate,
         0,

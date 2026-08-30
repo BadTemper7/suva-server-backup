@@ -18,9 +18,21 @@ const operationLogSchema = new Schema(
     },
     action: {
       type: String,
-      enum: ["cleaning", "maintenance", "check_in", "check_out"],
+      enum: [
+        "cleaning",
+        "maintenance",
+        "check_in",
+        "check_out",
+        "room_transfer",
+      ],
       required: true,
       index: true,
+    },
+    reason: {
+      type: String,
+      trim: true,
+      default: "",
+      maxlength: 500,
     },
     reservationId: {
       type: Schema.Types.ObjectId,

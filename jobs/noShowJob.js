@@ -37,26 +37,27 @@ export const markNoShowReservationsJob = async () => {
 
     for (const reservation of potentialNoShows) {
       try {
-        // Calculate if check-in time has passed (e.g., 2PM check-in time)
-        const checkInDate = new Date(reservation.checkIn);
-        const checkInTime = new Date(checkInDate);
-
-        // Set check-in time to 2:00 PM (14:00) as standard check-in time
-        checkInTime.setHours(14, 0, 0, 0);
-
         const now = new Date();
+        let checkInDeadline;
 
-        // If current time is past check-in time + grace period (e.g., 2 hours)
-        const gracePeriod = 2 * 60 * 60 * 1000; // 2 hours in milliseconds
-        const checkInDeadline = new Date(checkInTime.getTime() + gracePeriod);
+        if (reservation.stayType === "hourly") {
+          const start = new Date(reservation.checkIn);
+          const gracePeriod = 30 * 60 * 1000;
+          checkInDeadline = new Date(start.getTime() + gracePeriod);
+        } else {
+          const checkInDate = new Date(reservation.checkIn);
+          const checkInTime = new Date(checkInDate);
+          checkInTime.setHours(14, 0, 0, 0);
+          const gracePeriod = 2 * 60 * 60 * 1000;
+          checkInDeadline = new Date(checkInTime.getTime() + gracePeriod);
+        }
 
         if (now > checkInDeadline) {
-          // Mark as no-show
           reservation.status = "no_show";
           await reservation.save();
 
           console.log(
-            `Marked reservation ${reservation.reservationNumber} as no-show (Check-in: ${checkInDate.toDateString()})`,
+            `Marked reservation ${reservation.reservationNumber} as no-show (Check-in: ${new Date(reservation.checkIn).toDateString()})`,
           );
           noShowCount++;
         }

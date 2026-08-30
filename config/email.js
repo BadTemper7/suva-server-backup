@@ -5,10 +5,15 @@ import {
   bookingPolicySummaryIntro,
   resortGuestSummary,
   roomPolicySummary,
+  formatSecurityDepositCopy,
+  DEFAULT_SECURITY_DEPOSITS,
 } from "./bookingPolicySummaryData.js";
 import Billing from "../models/Billing.js";
 import Receipt from "../models/Receipt.js";
 import ReservationModels from "../models/Reservation.js";
+import Setting from "../models/Settings.js";
+import { stayDurationLabel } from "../utils/stayPricing.js";
+import { buildInvoicePdfBuffer } from "../utils/invoicePdf.js";
 
 const { Reservation: ReservationModel, ReservationRoom } = ReservationModels;
 
@@ -164,7 +169,7 @@ export const verifyEmailConnection = async () => {
 };
 
 // Enhanced send email function with better error handling
-export const sendEmail = async ({ to, subject, html, text }) => {
+export const sendEmail = async ({ to, subject, html, text, attachments }) => {
   if (!transporter) {
     console.error("❌ Email transporter not configured");
     return { success: false, error: "Email service not configured" };
@@ -191,6 +196,10 @@ export const sendEmail = async ({ to, subject, html, text }) => {
         "List-Unsubscribe": `<mailto:${fromEmail}?subject=unsubscribe>`,
       },
     };
+
+    if (Array.isArray(attachments) && attachments.length > 0) {
+      mailOptions.attachments = attachments;
+    }
 
     console.log(`📧 Sending email to: ${to}`);
     console.log(`   Subject: ${subject}`);
@@ -1155,6 +1164,10 @@ export const sendReservationStatusEmail = async (
   oldStatus,
   newStatus,
 ) => {
+  const depositSetting = await Setting.findOne({ key: "securityDeposits" }).lean();
+  const depositAmounts =
+    depositSetting?.value || DEFAULT_SECURITY_DEPOSITS;
+
   const statusTemplates = {
     pending: {
       subject: `Reservation ${reservation.reservationNumber} - Pending Confirmation`,
@@ -1330,7 +1343,7 @@ export const sendReservationStatusEmail = async (
             <p><strong>Reservation Number:</strong> ${escapeEmailHtml(reservation.reservationNumber)}</p>
             <p><strong>Check-in:</strong> ${escapeEmailHtml(checkInDate)}</p>
             <p><strong>Check-out:</strong> ${escapeEmailHtml(checkOutDate)}</p>
-            <p><strong>Nights:</strong> ${escapeEmailHtml(String(reservation.nights ?? ""))}</p>
+            <p><strong>Stay:</strong> ${escapeEmailHtml(stayDurationLabel(reservation))}</p>
             <p><strong>Guests:</strong> ${adults} adult(s), ${children} child(ren) (${totalPax} total)</p>
             ${pendingRoomsBlock}
             <p><strong>Payment plan:</strong> ${escapeEmailHtml(po?.name)}</p>
@@ -1341,14 +1354,14 @@ export const sendReservationStatusEmail = async (
             <p><strong>Reservation Number:</strong> ${escapeEmailHtml(reservation.reservationNumber)}</p>
             <p><strong>Check-in:</strong> ${escapeEmailHtml(checkInDateTime)}</p>
             <p><strong>Check-out:</strong> ${escapeEmailHtml(checkOutDateTime)}</p>
-            <p><strong>Nights:</strong> ${escapeEmailHtml(String(reservation.nights ?? ""))}</p>
+            <p><strong>Stay:</strong> ${escapeEmailHtml(stayDurationLabel(reservation))}</p>
             <p><strong>Guests:</strong> ${adults} adult(s), ${children} child(ren) (${totalPax} total)</p>`;
   } else {
     reservationDetailsInner = `
             <p><strong>Reservation Number:</strong> ${escapeEmailHtml(reservation.reservationNumber)}</p>
             <p><strong>Check-in:</strong> ${escapeEmailHtml(checkInDate)}</p>
             <p><strong>Check-out:</strong> ${escapeEmailHtml(checkOutDate)}</p>
-            <p><strong>Nights:</strong> ${escapeEmailHtml(String(reservation.nights ?? ""))}</p>`;
+            <p><strong>Stay:</strong> ${escapeEmailHtml(stayDurationLabel(reservation))}</p>`;
   }
 
   const confirmedArrivalReminderBlock =
@@ -1358,13 +1371,37 @@ export const sendReservationStatusEmail = async (
             <p style="color:#222;font-weight:700;margin:0 0 10px 0;font-size:15px;">Reminder: grace period &amp; security deposit</p>
             <p style="color:#222;font-size:14px;margin:0 0 10px 0;line-height:1.55;">
               At check-in, please present a <strong>valid government ID</strong> and pay a <strong>cash security deposit</strong>:
-              <strong>₱500</strong> for Cuarto &amp; Teodora, or <strong>₱1,000</strong> for Casa. The deposit is returned at checkout if there is no damage.
+              <strong>${escapeEmailHtml(formatSecurityDepositCopy(depositAmounts))}</strong>. The deposit is returned at checkout if there is no damage.
             </p>
             <p style="color:#222;font-size:14px;margin:0;line-height:1.55;">
               <strong>Grace period:</strong> Aim to arrive at your scheduled check-in time. If you will be late, please contact us. A <strong>2-hour grace period</strong> applies after <strong>2:00 PM</strong> on your check-in date; arrivals beyond that without notice may be treated as a no-show under resort policy.
             </p>
           </div>`
       : "";
+
+  const attachments = [];
+  let invoiceNote = "";
+  if (
+    guest?.email &&
+    billing?._id &&
+    (newStatus === "pending" || newStatus === "confirmed")
+  ) {
+    try {
+      const invoice = await buildInvoicePdfBuffer(billing._id);
+      attachments.push({
+        filename: invoice.filename,
+        content: invoice.buffer,
+        contentType: "application/pdf",
+      });
+      invoiceNote =
+        "Your payment invoice is attached as a PDF. It shows your stay charges and the amount due in advance.";
+    } catch (invoiceErr) {
+      console.error(
+        `Invoice PDF attach failed for reservation ${reservation.reservationNumber}:`,
+        invoiceErr.message,
+      );
+    }
+  }
 
   const html = `
     <!DOCTYPE html>
@@ -1464,6 +1501,12 @@ export const sendReservationStatusEmail = async (
             ${reservationDetailsInner}
           </div>
           
+          ${
+            invoiceNote
+              ? `<p style="color:#6b4c2c;font-size:14px;margin:0 0 24px 0;">${invoiceNote}</p>`
+              : ""
+          }
+          
           ${confirmedArrivalReminderBlock}
           
           ${policySummaryEmailBlock}
@@ -1484,7 +1527,61 @@ export const sendReservationStatusEmail = async (
     </html>
   `;
 
-  return await sendEmail({ to: guest.email, subject: template.subject, html });
+  return await sendEmail({
+    to: guest.email,
+    subject: template.subject,
+    html,
+    attachments,
+  });
+};
+
+export const sendInvoiceEmail = async (billingId) => {
+  const invoice = await buildInvoicePdfBuffer(billingId);
+  if (!invoice.guestEmail) {
+    return {
+      success: false,
+      error: "Guest has no email address. Download the invoice instead.",
+    };
+  }
+
+  const html = `
+    <!DOCTYPE html>
+    <html>
+    <head><meta charset="UTF-8" /></head>
+    <body style="font-family:Arial,sans-serif;color:#222;line-height:1.5;">
+      <p>Dear ${escapeEmailHtml(invoice.guestName)},</p>
+      <p>Your payment invoice for reservation <strong>${escapeEmailHtml(
+        invoice.reservationNumber || "N/A",
+      )}</strong> is attached as a PDF.</p>
+      <p>It shows your stay charges and the amount due in advance. If you already paid, please keep this for your records.</p>
+      <p>If you have questions, contact us at suvasplaceinc@gmail.com or +63 976023356.</p>
+      <p>Suva's Place Resort</p>
+    </body>
+    </html>
+  `;
+
+  const result = await sendEmail({
+    to: invoice.guestEmail,
+    subject: `Payment invoice ${invoice.billingNumber} — Suva's Place Resort`,
+    html,
+    attachments: [
+      {
+        filename: invoice.filename,
+        content: invoice.buffer,
+        contentType: "application/pdf",
+      },
+    ],
+  });
+
+  if (!result.success) {
+    return { success: false, error: result.error || "Failed to send email" };
+  }
+
+  return {
+    success: true,
+    filename: invoice.filename,
+    messageId: result.messageId,
+  };
 };
 
 // Export all email functions
@@ -1497,5 +1594,6 @@ export default {
   sendStaffPasswordResetEmail,
   sendStaffAccountLockedEmail,
   sendReservationStatusEmail,
+  sendInvoiceEmail,
   verifyEmailConnection,
 };

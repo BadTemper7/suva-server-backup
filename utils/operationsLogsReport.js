@@ -65,7 +65,7 @@ export function buildOperationsLogsMongoQuery({
   }
   if (
     action !== "all" &&
-    ["cleaning", "maintenance", "check_in", "check_out"].includes(action)
+    ["cleaning", "maintenance", "check_in", "check_out", "room_transfer"].includes(action)
   ) {
     query.action = action;
   }
@@ -127,6 +127,7 @@ export async function fetchOperationsLogsReportPayload(reqQuery) {
     maintenance: 0,
     check_in: 0,
     check_out: 0,
+    room_transfer: 0,
   };
   actionBreakdown.forEach((row) => {
     const id = row?._id;

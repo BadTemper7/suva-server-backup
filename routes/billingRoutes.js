@@ -10,6 +10,8 @@ import {
   exportBillingReport,
   processRefund,
   testTimezone,
+  streamInvoicePdf,
+  emailInvoicePdf,
 } from "../controllers/billingController.js";
 import Billing from "../models/Billing.js";
 
@@ -21,6 +23,8 @@ router.post("/", generateBilling);
 router.get("/reports", generateBillingReport);
 router.get("/reports/export", exportBillingReport);
 router.put("/calculate/:billingId", updateBillingCalc);
+router.get("/id/:billingId/invoice", streamInvoicePdf);
+router.post("/id/:billingId/invoice/email", emailInvoicePdf);
 router.get("/id/:billingId", getBillingById);
 router.post("/:billingId/refund", processRefund);
 router.get("/:reservationId", getBillingByReservation);

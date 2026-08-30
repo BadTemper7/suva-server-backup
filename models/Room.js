@@ -37,6 +37,11 @@ const roomSchema = new mongoose.Schema(
       required: true,
       min: 0,
     },
+    hourlyRates: {
+      hours3: { type: Number, default: 0, min: 0 },
+      hours6: { type: Number, default: 0, min: 0 },
+      hours12: { type: Number, default: 0, min: 0 },
+    },
 
     // Add description field
     description: {

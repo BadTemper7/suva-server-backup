@@ -61,7 +61,23 @@ const reservationSchema = new Schema(
       required: true,
     },
 
-    nights: { type: Number, required: true, min: 1 },
+    nights: { type: Number, required: true, min: 0, default: 0 },
+    stayType: {
+      type: String,
+      enum: ["overnight", "hourly"],
+      default: "overnight",
+      index: true,
+    },
+    hourlyDuration: {
+      type: Number,
+      default: null,
+      validate: {
+        validator(v) {
+          return v == null || [3, 6, 12].includes(Number(v));
+        },
+        message: "hourlyDuration must be 3, 6, or 12 hours",
+      },
+    },
 
     status: {
       type: String,

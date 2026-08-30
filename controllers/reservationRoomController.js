@@ -4,6 +4,11 @@ import Room from "../models/Room.js";
 import AddOn from "../models/AddOn.js";
 import mongoose from "mongoose";
 import Billing from "../models/Billing.js";
+import OperationLog from "../models/OperationLog.js";
+import {
+  getRoomStayCharge,
+  roomOffersHourlyPackage,
+} from "../utils/stayPricing.js";
 
 const { Reservation, ReservationRoom } = ReservationModels;
 
@@ -89,7 +94,9 @@ async function calculateDiscount(reservation) {
 const generateBillingForUpdatedReservation = async (reservationId) => {
   try {
     // Fetch the reservation
-    const reservation = await Reservation.findById(reservationId);
+    const reservation = await Reservation.findById(reservationId).populate(
+      "paymentOption",
+    );
     if (!reservation) return;
 
     // Fetch all the reservation rooms and their add-ons
@@ -102,8 +109,7 @@ const generateBillingForUpdatedReservation = async (reservationId) => {
     // Calculate subtotal for all rooms and add-ons
     let subTotal = 0;
     reservationRooms.forEach((resRoom) => {
-      const roomRate = resRoom.roomId?.rate || 0;
-      subTotal += roomRate;
+      subTotal += getRoomStayCharge(resRoom.roomId, reservation);
 
       if (resRoom.addOns && resRoom.addOns.length > 0) {
         resRoom.addOns.forEach((addOn) => {
@@ -521,3 +527,199 @@ export const updateAddOnQuantity = async (req, res) => {
     return res.status(500).json({ error: error.message });
   }
 };
+
+export const transferReservationRoom = async (req, res) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
+  try {
+    const { reservationRoomId } = req.params;
+    const { newRoomId, reason } = req.body;
+    const transferReason = String(reason || "").trim();
+
+    if (!newRoomId || !mongoose.isValidObjectId(String(newRoomId))) {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(400).json({ error: "A valid newRoomId is required" });
+    }
+    if (!transferReason) {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(400).json({ error: "Transfer reason is required" });
+    }
+
+    const reservationRoom = await ReservationRoom.findById(reservationRoomId)
+      .populate("roomId")
+      .session(session);
+    if (!reservationRoom) {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(404).json({ error: "Reservation room not found" });
+    }
+
+    const reservation = await Reservation.findById(
+      reservationRoom.reservationId,
+    ).session(session);
+    if (!reservation) {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(404).json({ error: "Reservation not found" });
+    }
+
+    if (!["confirmed", "checked_in"].includes(reservation.status)) {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(400).json({
+        error: "Room can only be changed while the stay is confirmed or in-house",
+      });
+    }
+
+    const oldRoom = reservationRoom.roomId;
+    const oldRoomId = oldRoom?._id || reservationRoom.roomId;
+    if (String(oldRoomId) === String(newRoomId)) {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(400).json({ error: "Select a different room" });
+    }
+
+    const newRoom = await Room.findById(newRoomId).session(session);
+    if (!newRoom) {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(404).json({ error: "Replacement room not found" });
+    }
+    if (newRoom.status !== "active") {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(400).json({
+        error: "Replacement room must be active",
+      });
+    }
+    if (oldRoom?.category && newRoom.category !== oldRoom.category) {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(400).json({
+        error: "Replacement must be the same category (room or cottage)",
+      });
+    }
+    if (
+      reservation.stayType === "hourly" &&
+      !roomOffersHourlyPackage(newRoom, reservation.hourlyDuration)
+    ) {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(400).json({
+        error: `Replacement does not offer a ${reservation.hourlyDuration}-hour rate`,
+      });
+    }
+
+    const alreadyLinked = await ReservationRoom.findOne({
+      reservationId: reservation._id,
+      roomId: newRoom._id,
+      _id: { $ne: reservationRoom._id },
+    }).session(session);
+    if (alreadyLinked) {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(400).json({
+        error: "That room is already on this reservation",
+      });
+    }
+
+    const windowStart =
+      reservation.status === "checked_in" ? new Date() : reservation.checkIn;
+    const windowEnd = reservation.checkOut;
+    const overlapping = await Reservation.find({
+      _id: { $ne: reservation._id },
+      status: { $in: ["pending", "confirmed", "checked_in"] },
+      checkIn: { $lt: windowEnd },
+      checkOut: { $gt: windowStart },
+    })
+      .select("_id")
+      .session(session);
+    const overlapIds = overlapping.map((r) => r._id);
+    if (overlapIds.length > 0) {
+      const conflict = await ReservationRoom.findOne({
+        reservationId: { $in: overlapIds },
+        roomId: newRoom._id,
+      }).session(session);
+      if (conflict) {
+        await session.abortTransaction();
+        session.endSession();
+        return res.status(409).json({
+          error: "Replacement room is not available for the remaining stay",
+        });
+      }
+    }
+
+    reservationRoom.roomId = newRoom._id;
+    await reservationRoom.save({ session });
+
+    if (oldRoom && oldRoom.status !== "maintenance") {
+      oldRoom.status = "to-clean";
+      await oldRoom.save({ session });
+    }
+
+    const actorUserId = req.user?._id || req.user?.id || null;
+    await OperationLog.create(
+      [
+        {
+          unitType: oldRoom?.category === "cottage" ? "cottage" : "room",
+          unitId: oldRoomId,
+          action: "room_transfer",
+          reservationId: reservation._id,
+          performedBy: actorUserId,
+          reason: transferReason,
+        },
+        {
+          unitType: newRoom.category === "cottage" ? "cottage" : "room",
+          unitId: newRoom._id,
+          action: "room_transfer",
+          reservationId: reservation._id,
+          performedBy: actorUserId,
+          reason: transferReason,
+        },
+        ...(oldRoom && oldRoom.status !== "maintenance"
+          ? [
+              {
+                unitType: oldRoom.category === "cottage" ? "cottage" : "room",
+                unitId: oldRoom._id,
+                action: "cleaning",
+                reservationId: reservation._id,
+                performedBy: actorUserId,
+                reason: `Vacated for transfer: ${transferReason}`,
+              },
+            ]
+          : []),
+      ],
+      { session },
+    );
+
+    await session.commitTransaction();
+    session.endSession();
+
+    await generateBillingForUpdatedReservation(reservation._id);
+
+    const updated = await ReservationRoom.findById(reservationRoom._id)
+      .populate("roomId")
+      .populate({
+        path: "roomId",
+        populate: { path: "roomType", model: "RoomType" },
+      })
+      .populate({ path: "addOns.addOnId", model: "AddOn" });
+
+    return res.status(200).json({
+      success: true,
+      message: `Moved from ${oldRoom?.roomNumber || "previous room"} to ${newRoom.roomNumber}`,
+      reservationRoom: updated,
+      oldRoomId,
+      newRoomId: newRoom._id,
+      reason: transferReason,
+    });
+  } catch (error) {
+    await session.abortTransaction();
+    session.endSession();
+    console.error("transferReservationRoom error:", error);
+    return res.status(500).json({ error: error.message });
+  }
+};
+

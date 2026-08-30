@@ -4,6 +4,7 @@ import cloudinary from "../config/cloudinary.js";
 import { createNotification } from "../models/Notification.js";
 import OperationLog from "../models/OperationLog.js";
 import { fetchOperationsLogsReportPayload } from "../utils/operationsLogsReport.js";
+import { parseHourlyRatesFromBody } from "../utils/stayPricing.js";
 
 const ALLOWED_ROOM_STATUSES = ["active", "maintenance", "clean", "to-clean"];
 const { Reservation, ReservationRoom } = ReservationModels;
@@ -98,6 +99,11 @@ export const createRoom = async (req, res) => {
       return res.status(400).json({ message: "Rate must be a non-negative number" });
     }
 
+    const hourlyParsed = parseHourlyRatesFromBody(req.body);
+    if (hourlyParsed.error) {
+      return res.status(400).json({ message: hourlyParsed.error });
+    }
+
     const desc = String(description ?? "").trim();
     if (!desc) {
       return res.status(400).json({ message: "Description is required" });
@@ -143,6 +149,7 @@ export const createRoom = async (req, res) => {
       roomNumber: String(roomNumber).trim(),
       capacity: cap,
       rate: rt,
+      hourlyRates: hourlyParsed.hourlyRates,
       status,
       category: category || "room",
       images: uploadedImages,
@@ -294,6 +301,11 @@ export const updateRoom = async (req, res) => {
       return res.status(400).json({ message: "Rate must be a non-negative number" });
     }
 
+    const hourlyParsed = parseHourlyRatesFromBody(req.body, room);
+    if (hourlyParsed.error) {
+      return res.status(400).json({ message: hourlyParsed.error });
+    }
+
     const desc =
       description !== undefined
         ? String(description).trim()
@@ -333,6 +345,7 @@ export const updateRoom = async (req, res) => {
     }
     room.capacity = cap;
     room.rate = rtParsed;
+    room.hourlyRates = hourlyParsed.hourlyRates;
     room.status = finalStatus;
     room.category = finalCategory;
     room.description = desc;

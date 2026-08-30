@@ -123,23 +123,33 @@ const DEFAULT_SETTINGS = [
     category: "general",
     order: 3,
   },
+  {
+    settingType: "system",
+    key: "securityDeposits",
+    value: { Cuarto: 500, Teodora: 500, Casa: 1000 },
+    label: "Security Deposit Amounts",
+    description:
+      "Cash security deposit collected at check-in, by room type name. Refunded at checkout if there is no damage.",
+    dataType: "json",
+    category: "general",
+    order: 4,
+  },
 ];
 
 // Initialize default settings
 // Update the initializeSettings function in settingsController.js
 export const initializeSettings = async () => {
   try {
-    const count = await Setting.countDocuments();
-
-    if (count === 0) {
-      await Setting.insertMany(DEFAULT_SETTINGS);
-      console.log("✅ Default settings initialized");
-    } else {
-      console.log(`✅ Settings already exist (${count} settings found)`);
+    for (const def of DEFAULT_SETTINGS) {
+      const existing = await Setting.findOne({ key: def.key });
+      if (!existing) {
+        await Setting.create(def);
+        console.log(`✅ Setting created: ${def.key}`);
+      }
     }
+    console.log("✅ Settings initialized");
   } catch (error) {
     console.error("❌ Error initializing settings:", error.message);
-    // Don't throw error to prevent server crash
   }
 };
 

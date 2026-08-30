@@ -16,31 +16,13 @@ import { createNotification } from "../models/Notification.js";
 import { sendReservationStatusEmail } from "../config/email.js";
 import { emailQueue } from "../utils/emailQueue.js";
 import OperationLog from "../models/OperationLog.js";
+import {
+  resolveStay,
+  getRoomStayCharge,
+  stayDurationLabel,
+} from "../utils/stayPricing.js";
 
 const { Reservation, ReservationRoom } = ReservationModels;
-
-const calcNights = (checkIn, checkOut) => {
-  const inDate = new Date(checkIn);
-  const outDate = new Date(checkOut);
-
-  if (Number.isNaN(inDate.getTime()) || Number.isNaN(outDate.getTime())) {
-    return 0;
-  }
-
-  // Calculate difference in milliseconds
-  const diffTime = outDate - inDate;
-
-  // Convert to days and round up (ceil) to count any partial day as a full night
-  const diffDays = diffTime / (1000 * 60 * 60 * 24);
-  const nights = Math.ceil(diffDays);
-
-  // Log for debugging (remove in production)
-  console.log(
-    `Nights calculation: ${inDate.toISOString()} to ${outDate.toISOString()} = ${nights} nights`,
-  );
-
-  return nights;
-};
 
 const escapeRegex = (value = "") =>
   String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -74,7 +56,7 @@ const generateReservationNumber = async () => {
 // Function to calculate nights
 export const checkAvailableRooms = async (req, res) => {
   try {
-    const { checkIn, checkOut } = req.query;
+    const { checkIn, checkOut, excludeReservationId } = req.query;
 
     if (!checkIn || !checkOut) {
       return res
@@ -92,22 +74,38 @@ export const checkAvailableRooms = async (req, res) => {
       return res.status(400).json({ error: "Invalid checkIn/checkOut dates" });
     }
 
-    // 1️⃣ Get all reservations overlapping the requested dates
-    const overlappingReservations = await Reservation.find({
-      status: { $in: ["pending", "confirmed", "checked_in"] }, // rooms unavailable if reserved
+    const overlapFilter = {
+      status: { $in: ["pending", "confirmed", "checked_in"] },
       $or: [{ checkIn: { $lt: checkOutDate }, checkOut: { $gt: checkInDate } }],
-    });
-
-    // 2️⃣ Get all booked room IDs in those reservations
-    const bookedRoomIds = [];
-    for (const reservation of overlappingReservations) {
-      const resRooms = await ReservationRoom.find({
-        reservationId: reservation._id,
-      });
-      resRooms.forEach((r) => bookedRoomIds.push(r.roomId.toString()));
+    };
+    if (
+      excludeReservationId &&
+      mongoose.isValidObjectId(String(excludeReservationId))
+    ) {
+      overlapFilter._id = { $ne: excludeReservationId };
     }
 
-    // 3️⃣ Get all rooms that are not booked and populate roomType
+    const overlappingReservations = await Reservation.find(overlapFilter)
+      .select("_id")
+      .lean();
+    const overlapIds = overlappingReservations.map((r) => r._id);
+
+    let bookedRoomIds = [];
+    if (overlapIds.length > 0) {
+      const resRooms = await ReservationRoom.find({
+        reservationId: { $in: overlapIds },
+      })
+        .select("roomId")
+        .lean();
+      bookedRoomIds = [
+        ...new Set(
+          resRooms
+            .map((r) => r.roomId?.toString?.() || String(r.roomId || ""))
+            .filter(Boolean),
+        ),
+      ];
+    }
+
     const availableRooms = await Room.find({
       _id: { $nin: bookedRoomIds },
       status: "active",
@@ -141,6 +139,8 @@ export const addReservation = async (req, res) => {
       discountId,
       seniorCitizenCount: rawSenior = 0,
       pwdCount: rawPwd = 0,
+      stayType: rawStayType,
+      hourlyDuration: rawHourlyDuration,
     } = req.body;
 
     // Basic validation
@@ -245,20 +245,17 @@ export const addReservation = async (req, res) => {
       }
     }
 
-    const inDate = new Date(checkIn);
-    const outDate = new Date(checkOut);
-    if (
-      Number.isNaN(inDate.getTime()) ||
-      Number.isNaN(outDate.getTime()) ||
-      outDate <= inDate
-    )
-      return res.status(400).json({ error: "Invalid checkIn/checkOut" });
-
-    const nights = calcNights(inDate, outDate);
-    if (nights < 1)
-      return res
-        .status(400)
-        .json({ error: "Reservation must be at least 1 night" });
+    const stay = resolveStay({
+      stayType: rawStayType,
+      hourlyDuration: rawHourlyDuration,
+      checkIn,
+      checkOut,
+    });
+    if (stay.error) {
+      return res.status(400).json({ error: stay.error });
+    }
+    const { checkIn: inDate, checkOut: outDate, nights, stayType, hourlyDuration } =
+      stay;
 
     const adultCount = Number(adults);
     const childCount = Number(children) || 0;
@@ -308,6 +305,8 @@ export const addReservation = async (req, res) => {
         notes,
         paymentOption: paymentOptionDoc._id,
         nights,
+        stayType,
+        hourlyDuration,
         status,
         userId: userId || null,
         discountId: discountId || null,
@@ -493,7 +492,7 @@ export const updateReservationStatus = async (req, res) => {
 
       if (roomIds.length > 0) {
         const units = await Room.find({ _id: { $in: roomIds } })
-          .select("_id category")
+          .select("_id category status")
           .session(session);
         const unitById = new Map(units.map((u) => [String(u._id), u]));
 
@@ -513,6 +512,29 @@ export const updateReservationStatus = async (req, res) => {
 
         if (logDocs.length > 0) {
           await OperationLog.insertMany(logDocs, { session });
+        }
+
+        if (status === "checked_out" && previousStatus !== "checked_out") {
+          const unitsToClean = units.filter(
+            (u) => String(u.status || "") !== "maintenance",
+          );
+          const cleanIds = unitsToClean.map((u) => u._id);
+          if (cleanIds.length > 0) {
+            await Room.updateMany(
+              { _id: { $in: cleanIds }, status: { $ne: "maintenance" } },
+              { $set: { status: "to-clean" } },
+              { session },
+            );
+            const cleaningLogs = unitsToClean.map((unit) => ({
+              unitType: unit.category === "cottage" ? "cottage" : "room",
+              unitId: unit._id,
+              action: "cleaning",
+              reservationId: reservation._id,
+              performedBy: actorUserId || reservation.userId || null,
+              reason: "Auto-set to-clean after checkout",
+            }));
+            await OperationLog.insertMany(cleaningLogs, { session });
+          }
         }
       }
     }
@@ -585,21 +607,31 @@ export const updateReservationStatus = async (req, res) => {
 // --- UPDATE RESERVATION ---
 export const updateReservation = async (req, res) => {
   try {
-    const { reservationId, checkIn, checkOut } = req.body;
+    const { reservationId, checkIn, checkOut, stayType, hourlyDuration } =
+      req.body;
 
-    // Validate reservation exists
     const reservation = await Reservation.findById(reservationId);
     if (!reservation)
       return res.status(404).json({ error: "Reservation not found" });
 
-    // Update reservation details (checkIn/checkOut, etc.)
-    reservation.checkIn = new Date(checkIn);
-    reservation.checkOut = new Date(checkOut);
-    await reservation.save();
+    const stay = resolveStay({
+      stayType: stayType || reservation.stayType,
+      hourlyDuration:
+        hourlyDuration !== undefined
+          ? hourlyDuration
+          : reservation.hourlyDuration,
+      checkIn: checkIn || reservation.checkIn,
+      checkOut: checkOut || reservation.checkOut,
+    });
+    if (stay.error) {
+      return res.status(400).json({ error: stay.error });
+    }
 
-    // Recalculate nights
-    const nights = calcNights(reservation.checkIn, reservation.checkOut);
-    reservation.nights = nights;
+    reservation.checkIn = stay.checkIn;
+    reservation.checkOut = stay.checkOut;
+    reservation.nights = stay.nights;
+    reservation.stayType = stay.stayType;
+    reservation.hourlyDuration = stay.hourlyDuration;
     await reservation.save();
 
     return res.status(200).json({
@@ -1487,6 +1519,9 @@ export const generateReservationConfirmation = async (req, res) => {
     doc.fontSize(12);
     doc.text(`Reservation Number: ${reservation.reservationNumber || "N/A"}`);
     doc.text(
+      `Stay type: ${reservation.stayType === "hourly" ? `Hourly (${reservation.hourlyDuration || 0} hrs)` : "Overnight"}`,
+    );
+    doc.text(
       `Guest: ${reservation.guestId?.firstName || ""} ${reservation.guestId?.lastName || ""}`,
     );
     doc.text(`Email: ${reservation.guestId?.email || "N/A"}`);
@@ -1499,7 +1534,7 @@ export const generateReservationConfirmation = async (req, res) => {
     doc.text(
       `Check-out: ${reservation.checkOut ? reservation.checkOut.toLocaleDateString() : "N/A"}`,
     );
-    doc.text(`Nights: ${reservation.nights || 0}`);
+    doc.text(`Stay: ${stayDurationLabel(reservation)}`);
     doc.text(
       `Adults: ${reservation.adults || 0}, Children: ${reservation.children || 0}`,
     );
@@ -1669,10 +1704,11 @@ export const getReservationsByGuest = async (req, res) => {
                 }),
               );
 
-              // Calculate room total (room rate * nights + amenities)
               const roomRate = roomRes.roomId?.rate || 0;
-              const nights = reservation.nights || 1;
-              const roomSubtotal = roomRate * nights;
+              const roomSubtotal = getRoomStayCharge(
+                roomRes.roomId,
+                reservation,
+              );
               const amenitiesSubtotal = amenitiesWithDetails.reduce(
                 (sum, a) => sum + a.subtotal,
                 0,
@@ -1688,7 +1724,9 @@ export const getReservationsByGuest = async (req, res) => {
                 capacity: roomRes.roomId?.capacity || 0,
                 bedType: roomRes.roomId?.bedType || "N/A",
                 rate: roomRate,
-                nights: nights,
+                stayType: reservation.stayType || "overnight",
+                hourlyDuration: reservation.hourlyDuration || null,
+                nights: reservation.nights || 0,
                 roomSubtotal: roomSubtotal,
                 amenities: amenitiesWithDetails,
                 amenitiesSubtotal: amenitiesSubtotal,
@@ -1838,6 +1876,10 @@ export const getReservationsByGuest = async (req, res) => {
             seniorCitizenCount: reservation.seniorCitizenCount ?? 0,
             pwdCount: reservation.pwdCount ?? 0,
             nights: reservation.nights,
+            stayType: reservation.stayType || "overnight",
+            hourlyDuration: reservation.hourlyDuration || null,
+            actualCheckInAt: reservation.actualCheckInAt || null,
+            actualCheckOutAt: reservation.actualCheckOutAt || null,
             status: reservation.status,
             notes: reservation.notes,
             createdAt: reservation.createdAt,
@@ -1934,6 +1976,8 @@ export const getReservationsByGuest = async (req, res) => {
             receiptImages: receipt.receiptImages || [],
             notes: receipt.notes,
             createdAt: receipt.createdAt,
+            stayType: reservation.stayType || "overnight",
+            hourlyDuration: reservation.hourlyDuration || null,
           })),
 
           // Payment Summary

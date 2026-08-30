@@ -41,3 +41,38 @@ export const roomPolicySummary = {
     "The full Resort Guest Policy also applies to all room guests.",
   ],
 };
+
+export const DEFAULT_SECURITY_DEPOSITS = {
+  Cuarto: 500,
+  Teodora: 500,
+  Casa: 1000,
+};
+
+export function formatSecurityDepositCopy(deposits) {
+  const d =
+    deposits && typeof deposits === "object" && !Array.isArray(deposits)
+      ? deposits
+      : DEFAULT_SECURITY_DEPOSITS;
+  const groups = new Map();
+  for (const [name, amt] of Object.entries(d)) {
+    const n = Number(amt);
+    if (!Number.isFinite(n)) continue;
+    const key = String(n);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(String(name));
+  }
+  const parts = [...groups.entries()].map(([amt, names]) => {
+    const formatted = `₱${Number(amt).toLocaleString("en-PH")}`;
+    if (names.length === 1) return `${formatted} (${names[0]})`;
+    if (names.length === 2) return `${formatted} (${names[0]} & ${names[1]})`;
+    return `${formatted} (${names.slice(0, -1).join(", ")} & ${names[names.length - 1]})`;
+  });
+  if (parts.length === 0) {
+    return "a cash deposit as posted at the Front Desk";
+  }
+  return parts.join(", or ");
+}
+
+export function roomPolicyDepositItem(deposits) {
+  return `Valid government ID and a cash deposit at check-in: ${formatSecurityDepositCopy(deposits)}, refunded at checkout if there is no damage.`;
+}
