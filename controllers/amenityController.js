@@ -45,11 +45,28 @@ export const createAmenity = async (req, res) => {
 /* -------------------- GET AMENITIES -------------------- */
 export const getAmenities = async (req, res) => {
   try {
-    const { status, activeOnly } = req.query;
+    const { status, activeOnly, inStock, availableOnly, lowStock, threshold } =
+      req.query;
 
     const filter = {};
-    if (activeOnly === "true") filter.status = "active";
-    else if (status) filter.status = status;
+    if (availableOnly === "true") {
+      filter.status = "active";
+      filter.stock = { $gt: 0 };
+    } else {
+      if (activeOnly === "true") filter.status = "active";
+      else if (status) filter.status = status;
+
+      if (inStock === "true") {
+        filter.stock = { ...(filter.stock || {}), $gt: 0 };
+      }
+      if (lowStock === "true") {
+        const maxStock = Number(threshold);
+        filter.stock = {
+          ...(filter.stock || {}),
+          $lte: Number.isFinite(maxStock) ? maxStock : 10,
+        };
+      }
+    }
 
     const amenities = await Amenity.find(filter).sort({ createdAt: -1 });
     return res.json(amenities);

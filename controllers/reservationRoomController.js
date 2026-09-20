@@ -37,7 +37,11 @@ async function validateAddOnStock(
     const addOn = await AddOn.findById(addOnId);
     if (!addOn) throw new Error(`Add-on not found: ${addOnId}`);
     if (addOn.status !== "active")
-      throw new Error(`Add-on is not active: ${addOn.name}`);
+      throw new Error(
+        `Add-on '${addOn.name}' is inactive and cannot be reserved.`,
+      );
+    if (Number(addOn.stock) <= 0)
+      throw new Error(`Add-on '${addOn.name}' is out of stock.`);
 
     // Calculate reserved stock during this reservation period
     const matchStage = {
@@ -171,6 +175,25 @@ export const addReservationRooms = async (req, res) => {
     if (!reservation)
       return res.status(404).json({ error: "Reservation not found" });
 
+    const combinedAddOns = [];
+    const qtyByAddOnId = new Map();
+    for (const room of rooms || []) {
+      for (const item of room.addOns || []) {
+        if (!item?.addOnId) continue;
+        const id = String(item.addOnId);
+        qtyByAddOnId.set(
+          id,
+          (qtyByAddOnId.get(id) || 0) + Number(item.quantity || 0),
+        );
+      }
+    }
+    qtyByAddOnId.forEach((quantity, addOnId) => {
+      combinedAddOns.push({ addOnId, quantity });
+    });
+    if (combinedAddOns.length > 0) {
+      await validateAddOnStock(reservation, combinedAddOns);
+    }
+
     // Add rooms and add-ons to the reservation
     for (const room of rooms) {
       // Validate room existence
@@ -179,11 +202,6 @@ export const addReservationRooms = async (req, res) => {
         return res
           .status(404)
           .json({ error: `Room not found: ${missingRooms.join(", ")}` });
-      }
-
-      // Validate add-ons stock
-      if (room.addOns && room.addOns.length > 0) {
-        await validateAddOnStock(reservation, room.addOns);
       }
 
       let reservationRoom = await ReservationRoom.findOne({

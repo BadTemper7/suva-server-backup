@@ -55,11 +55,35 @@ export const createAddOn = async (req, res) => {
 /* -------------------- GET ADD-ONS -------------------- */
 export const getAddOns = async (req, res) => {
   try {
-    const { status, category, activeOnly } = req.query;
+    const {
+      status,
+      category,
+      activeOnly,
+      inStock,
+      availableOnly,
+      lowStock,
+      threshold,
+    } = req.query;
 
     const filter = {};
-    if (activeOnly === "true") filter.status = "active";
-    else if (status) filter.status = status;
+    if (availableOnly === "true") {
+      filter.status = "active";
+      filter.stock = { $gt: 0 };
+    } else {
+      if (activeOnly === "true") filter.status = "active";
+      else if (status) filter.status = status;
+
+      if (inStock === "true") {
+        filter.stock = { ...(filter.stock || {}), $gt: 0 };
+      }
+      if (lowStock === "true") {
+        const maxStock = Number(threshold);
+        filter.stock = {
+          ...(filter.stock || {}),
+          $lte: Number.isFinite(maxStock) ? maxStock : 10,
+        };
+      }
+    }
     if (category) filter.category = category;
 
     const addOns = await AddOn.find(filter).sort({ createdAt: -1 });
