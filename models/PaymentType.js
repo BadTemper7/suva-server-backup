@@ -18,6 +18,15 @@ const paymentTypeSchema = new Schema(
       type: Boolean,
       default: true,
     },
+    // Optional — shown to guests during payment so they can scan it (WT-06).
+    qrCodeUrl: {
+      type: String,
+      default: null,
+    },
+    qrCodePublicId: {
+      type: String,
+      default: null,
+    },
   },
   { timestamps: true } // Automatically add createdAt and updatedAt
 );

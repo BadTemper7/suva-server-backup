@@ -1,4 +1,6 @@
 import PaymentType from "../models/PaymentType.js";
+import cloudinary from "../config/cloudinary.js";
+import { deleteFromCloudinary } from "../utils/cloudinary.js";
 
 // Create a new PaymentType
 export const createPaymentType = async (req, res) => {
@@ -17,10 +19,22 @@ export const createPaymentType = async (req, res) => {
         .json({ error: "Payment type with this name already exists" });
     }
 
+    let qrCodeUrl = null;
+    let qrCodePublicId = null;
+    if (req.file) {
+      const result = await cloudinary.uploader.upload(req.file.path, {
+        folder: "payment-types",
+      });
+      qrCodeUrl = result.secure_url;
+      qrCodePublicId = result.public_id;
+    }
+
     const paymentType = new PaymentType({
       name,
       isReceipt,
       isActive,
+      qrCodeUrl,
+      qrCodePublicId,
     });
 
     await paymentType.save();
@@ -60,21 +74,40 @@ export const getPaymentTypeById = async (req, res) => {
 // Update a PaymentType by ID
 export const updatePaymentType = async (req, res) => {
   try {
-    const { name, isReceipt, isActive } = req.body;
+    const { name, isReceipt, isActive, removeQrCode } = req.body;
 
-    const updatedPaymentType = await PaymentType.findByIdAndUpdate(
-      req.params.id,
-      { name, isReceipt, isActive },
-      { new: true, runValidators: true },
-    );
-
-    if (!updatedPaymentType) {
+    const paymentType = await PaymentType.findById(req.params.id);
+    if (!paymentType) {
       return res.status(404).json({ error: "Payment type not found" });
     }
 
+    if (name !== undefined) paymentType.name = name;
+    if (isReceipt !== undefined) paymentType.isReceipt = isReceipt;
+    if (isActive !== undefined) paymentType.isActive = isActive;
+
+    const wantsRemoval = removeQrCode === true || removeQrCode === "true";
+
+    if (req.file) {
+      // Replacing — delete the old image first if there was one.
+      if (paymentType.qrCodePublicId) {
+        await deleteFromCloudinary(paymentType.qrCodePublicId).catch(() => {});
+      }
+      const result = await cloudinary.uploader.upload(req.file.path, {
+        folder: "payment-types",
+      });
+      paymentType.qrCodeUrl = result.secure_url;
+      paymentType.qrCodePublicId = result.public_id;
+    } else if (wantsRemoval && paymentType.qrCodePublicId) {
+      await deleteFromCloudinary(paymentType.qrCodePublicId).catch(() => {});
+      paymentType.qrCodeUrl = null;
+      paymentType.qrCodePublicId = null;
+    }
+
+    await paymentType.save();
+
     return res.status(200).json({
       message: "Payment type updated successfully",
-      paymentType: updatedPaymentType,
+      paymentType,
     });
   } catch (error) {
     return res.status(500).json({ error: error.message });
