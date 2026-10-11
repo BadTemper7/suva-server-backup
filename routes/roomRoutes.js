@@ -8,6 +8,7 @@ import {
   updateRoom,
   deleteRoom,
   deleteMultipleRooms,
+  bulkUpdateRoomStatus,
 } from "../controllers/roomController.js";
 import {
   protect,
@@ -32,5 +33,13 @@ router.delete("/:id", protect, adminOnly, deleteRoom);
 
 // New: Delete multiple rooms
 router.post("/delete-multiple", protect, adminOnly, deleteMultipleRooms);
+
+// New: Bulk status update (rooms/cottages) — see WT-05
+router.post(
+  "/bulk-status",
+  protect,
+  receptionistOrAdmin,
+  bulkUpdateRoomStatus,
+);
 
 export default router;

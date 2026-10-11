@@ -612,6 +612,105 @@ export const deleteMultipleRooms = async (req, res) => {
   }
 };
 
+/* -------------------- BULK UPDATE ROOM STATUS -------------------- */
+export const bulkUpdateRoomStatus = async (req, res) => {
+  try {
+    const { roomIds, status, maintenanceReason } = req.body;
+
+    if (!roomIds || !Array.isArray(roomIds) || roomIds.length === 0) {
+      return res.status(400).json({ message: "roomIds array is required" });
+    }
+
+    const stErr = validateRoomStatus(status);
+    if (stErr) {
+      return res.status(400).json({ message: stErr });
+    }
+
+    // Shared reason is copied onto every room below, not linked — editing one
+    // room's reason afterward via the normal update endpoint won't affect
+    // the others. See WT-05.
+    const mr = String(maintenanceReason ?? "").trim();
+    if (status === "maintenance" && !mr) {
+      return res.status(400).json({
+        message: "Maintenance reason is required when status is maintenance",
+      });
+    }
+
+    const rooms = await Room.find({ _id: { $in: roomIds } });
+    if (rooms.length === 0) {
+      return res.status(404).json({ message: "No matching rooms found" });
+    }
+
+    const normalized = String(status).toLowerCase().trim();
+    const action =
+      normalized === "maintenance"
+        ? "maintenance"
+        : normalized === "inactive"
+          ? "cleaning"
+          : null;
+
+    // One OperationLog entry per room, same as the single-room update path,
+    // so each unit's individual history stays intact rather than collapsing
+    // into one shared log line.
+    const logDocs = [];
+    for (const room of rooms) {
+      room.status = status;
+      room.maintenanceReason = status === "maintenance" ? mr : "";
+      await room.save();
+
+      if (action) {
+        const reservationId = await findReservationIdForLogDate(room._id);
+        logDocs.push({
+          unitType: room.category === "cottage" ? "cottage" : "room",
+          unitId: room._id,
+          action,
+          reservationId,
+          performedBy: req.user?._id || null,
+        });
+      }
+    }
+
+    if (logDocs.length > 0) {
+      await OperationLog.insertMany(logDocs);
+    }
+
+    const labels = rooms
+      .map((r) =>
+        r.roomNumber
+          ? `${r.category === "cottage" ? "Cottage" : "Room"} ${r.roomNumber}`
+          : r._id.toString(),
+      )
+      .filter(Boolean);
+
+    await createNotification({
+      actorUserId: req.user?._id || null,
+      type: "maintenance",
+      title: "Rooms/Cottages Bulk Status Update",
+      description:
+        (labels.length <= 10
+          ? `Updated ${rooms.length} item(s) to "${status}": ${labels.join(", ")}.`
+          : `Updated ${rooms.length} item(s) to "${status}". Example: ${labels
+              .slice(0, 5)
+              .join(", ")}...`) +
+        (status === "maintenance" ? ` Reason: ${mr}` : ""),
+      source: "Maintenance",
+      entity: { kind: "Room", id: null },
+    });
+
+    return res.json({
+      success: true,
+      modifiedCount: rooms.length,
+      rooms,
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({
+      message: "Failed to update rooms",
+      error: error.message,
+    });
+  }
+};
+
 export const getOperationLogs = async (req, res) => {
   try {
     if (String(req.query.format || "").toLowerCase() === "report") {
