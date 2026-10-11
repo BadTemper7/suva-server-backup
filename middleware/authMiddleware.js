@@ -123,3 +123,26 @@ export const receptionistOrAdmin = (req, res, next) => {
   }
   next();
 };
+
+// Admin/superadmin always pass; a receptionist needs "manage" on either
+// reservations or front desk — mirrors the frontend's
+// canManageReservationsOrFrontDesk (staffPermissions.js). Used for the
+// reschedule endpoint (WT-09); must run after `protect`.
+export const canManageReservations = async (req, res, next) => {
+  if (["admin", "superadmin"].includes(req.user?.role)) {
+    return next();
+  }
+  if (req.user?.role !== "receptionist") {
+    return res.status(403).json({ message: "Access forbidden" });
+  }
+
+  const user = await User.findById(req.user.id).select(
+    "receptionistPermissions",
+  );
+  const perms = user?.receptionistPermissions || {};
+  if (perms.reservations === "manage" || perms.frontDesk === "manage") {
+    return next();
+  }
+
+  return res.status(403).json({ message: "Access forbidden" });
+};

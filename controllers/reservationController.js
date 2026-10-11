@@ -17,7 +17,7 @@ import ExcelJS from "exceljs";
 import fs from "fs";
 import path from "path";
 import { createNotification } from "../models/Notification.js";
-import { sendReservationStatusEmail } from "../config/email.js";
+import { sendReservationStatusEmail, sendEmail } from "../config/email.js";
 import { emailQueue } from "../utils/emailQueue.js";
 import OperationLog from "../models/OperationLog.js";
 import { computeBillingTotals } from "../utils/billingCalc.js";
@@ -791,20 +791,54 @@ export const updateReservationStatus = async (req, res) => {
 };
 
 // --- UPDATE RESERVATION ---
+// --- RESCHEDULE RESERVATION --- (rebuilt for WT-09; was previously dead code
+// with no auth, no availability check, and no billing recalculation despite
+// its response message claiming otherwise)
+const RESCHEDULE_CUTOFF_MS = 7 * 24 * 60 * 60 * 1000;
+
 export const updateReservation = async (req, res) => {
   try {
-    const { reservationId, checkIn, checkOut, stayType, hourlyDuration } =
-      req.body;
+    const {
+      reservationId,
+      checkIn,
+      checkOut,
+      stayType,
+      hourlyDuration,
+      overrideCutoff,
+      overrideReason,
+    } = req.body;
 
     const reservation = await Reservation.findById(reservationId);
     if (!reservation)
       return res.status(404).json({ error: "Reservation not found" });
+
+    if (!["pending", "confirmed"].includes(reservation.status)) {
+      return res.status(400).json({
+        error: `Reservation cannot be rescheduled while ${reservation.status}`,
+      });
+    }
 
     const before = {
       checkIn: reservation.checkIn,
       checkOut: reservation.checkOut,
       stayType: reservation.stayType,
     };
+
+    const isAdminRole = ["admin", "superadmin"].includes(req.user?.role);
+    const trimmedOverrideReason = String(overrideReason || "").trim();
+    const hasValidOverride =
+      overrideCutoff === true && isAdminRole && trimmedOverrideReason;
+
+    const hoursUntilCheckIn =
+      (new Date(before.checkIn).getTime() - Date.now()) / (60 * 60 * 1000);
+    if (
+      hoursUntilCheckIn < RESCHEDULE_CUTOFF_MS / (60 * 60 * 1000) &&
+      !hasValidOverride
+    ) {
+      return res.status(400).json({
+        error: "Reservation must be rescheduled at least 7 days before check-in",
+      });
+    }
 
     const stay = resolveStay({
       stayType: stayType || reservation.stayType,
@@ -819,6 +853,45 @@ export const updateReservation = async (req, res) => {
       return res.status(400).json({ error: stay.error });
     }
 
+    // Availability check: this reservation's current rooms must be free for
+    // the new window too (excluding this reservation itself), reusing the
+    // same overlap logic checkAvailableRooms uses.
+    const myRoomLinks = await ReservationRoom.find({
+      reservationId: reservation._id,
+    }).populate("roomId", "roomNumber category");
+    const myRoomIds = myRoomLinks.map((l) => l.roomId?._id).filter(Boolean);
+
+    if (myRoomIds.length > 0) {
+      const overlapping = await Reservation.find({
+        _id: { $ne: reservation._id },
+        status: { $in: ["pending", "confirmed", "checked_in"] },
+        checkIn: { $lt: stay.checkOut },
+        checkOut: { $gt: stay.checkIn },
+      })
+        .select("_id")
+        .lean();
+      const overlapIds = overlapping.map((r) => r._id);
+
+      if (overlapIds.length > 0) {
+        const conflictingLinks = await ReservationRoom.find({
+          reservationId: { $in: overlapIds },
+          roomId: { $in: myRoomIds },
+        }).populate("roomId", "roomNumber category");
+
+        if (conflictingLinks.length > 0) {
+          return res.status(409).json({
+            error: "Selected room(s) not available for the new dates",
+            conflicts: conflictingLinks.map((l) => ({
+              roomId: l.roomId?._id,
+              roomNumber: l.roomId?.roomNumber,
+            })),
+          });
+        }
+      }
+    }
+
+    const nightsChanged = reservation.nights !== stay.nights;
+
     reservation.checkIn = stay.checkIn;
     reservation.checkOut = stay.checkOut;
     reservation.nights = stay.nights;
@@ -826,40 +899,97 @@ export const updateReservation = async (req, res) => {
     reservation.hourlyDuration = stay.hourlyDuration;
     await reservation.save();
 
-    // This endpoint has no auth middleware today (tracked separately under
-    // WT-09, which rebuilds it for the reschedule feature) - req.user is
-    // read here so actor tracking starts working the moment that lands,
-    // without touching this logging again.
-    const datesChanged =
-      before.checkIn?.getTime?.() !== reservation.checkIn?.getTime?.() ||
-      before.checkOut?.getTime?.() !== reservation.checkOut?.getTime?.() ||
-      before.stayType !== reservation.stayType;
+    let billingUpdated;
+    if (nightsChanged) {
+      const billing = await Billing.findOne({ reservationId: reservation._id });
+      if (billing) {
+        const [reservationRooms, discount, discountImg, receipts, paymentOption] =
+          await Promise.all([
+            ReservationRoom.find({ reservationId: reservation._id })
+              .populate("roomId")
+              .populate({
+                path: "addOns",
+                populate: { path: "addOnId", model: "AddOn" },
+              }),
+            reservation.discountId
+              ? Discount.findById(reservation.discountId)
+              : null,
+            DiscountImage.find({ billingId: billing._id }),
+            Receipt.find({ billingId: billing._id }),
+            PaymentOption.findById(reservation.paymentOption),
+          ]);
 
-    if (datesChanged) {
-      await logReservationHistory({
-        reservationId: reservation._id,
-        actorUserId: req.user?._id || req.user?.id || null,
-        actorLabel: req.user?.username,
-        action: "dates_changed",
-        summary: `Dates changed from ${before.checkIn?.toISOString?.() || before.checkIn} - ${before.checkOut?.toISOString?.() || before.checkOut} to ${reservation.checkIn.toISOString()} - ${reservation.checkOut.toISOString()}`,
-        changes: {
-          before: {
-            checkIn: before.checkIn,
-            checkOut: before.checkOut,
-            stayType: before.stayType,
-          },
-          after: {
-            checkIn: reservation.checkIn,
-            checkOut: reservation.checkOut,
-            stayType: reservation.stayType,
-          },
+        const after = computeBillingTotals({
+          billing,
+          reservation,
+          reservationRooms,
+          discount,
+          discountImg,
+          receipts,
+          paymentOption,
+        });
+
+        billing.subTotal = after.subTotal;
+        billing.discountAmount = after.discountAmount;
+        billing.totalAmount = after.totalAmount;
+        billing.amountPaid = after.amountPaid;
+        billing.amountDueNow = after.amountDueNow;
+        billing.balance = after.balance;
+        billing.status = after.status;
+        billing.isRefundable = after.isRefundable;
+        billing.refundAmount = after.refundAmount;
+        await billing.save();
+
+        billingUpdated = {
+          amountPaid: after.amountPaid,
+          status: after.status,
+          isRefundable: after.isRefundable,
+        };
+      }
+    }
+
+    const overrideNote = hasValidOverride
+      ? ` (cutoff overridden: ${trimmedOverrideReason})`
+      : "";
+    await logReservationHistory({
+      reservationId: reservation._id,
+      actorUserId: req.user?._id || req.user?.id || null,
+      actorLabel: req.user?.username,
+      action: "dates_changed",
+      summary: `Rescheduled from ${before.checkIn.toISOString()} - ${before.checkOut.toISOString()} to ${reservation.checkIn.toISOString()} - ${reservation.checkOut.toISOString()}${overrideNote}`,
+      changes: {
+        before: {
+          checkIn: before.checkIn,
+          checkOut: before.checkOut,
+          stayType: before.stayType,
         },
-      });
+        after: {
+          checkIn: reservation.checkIn,
+          checkOut: reservation.checkOut,
+          stayType: reservation.stayType,
+        },
+        overrideReason: hasValidOverride ? trimmedOverrideReason : undefined,
+      },
+    });
+
+    // Best-effort — a failed email shouldn't undo the reschedule itself.
+    try {
+      const guest = await Guest.findById(reservation.guestId);
+      if (guest?.email) {
+        await sendEmail({
+          to: guest.email,
+          subject: `Your reservation ${reservation.reservationNumber} has been rescheduled`,
+          html: `<p>Hi ${guest.firstName || "Guest"},</p><p>Your reservation <strong>${reservation.reservationNumber}</strong> has been rescheduled.</p><p>New dates: <strong>${reservation.checkIn.toLocaleDateString()} - ${reservation.checkOut.toLocaleDateString()}</strong></p><p>If you have questions, please contact us.</p>`,
+        });
+      }
+    } catch (emailErr) {
+      console.error("Failed to send reschedule email:", emailErr.message);
     }
 
     return res.status(200).json({
-      message: "Reservation updated and billing recalculated",
+      message: "Reservation rescheduled successfully",
       reservation,
+      ...(billingUpdated ? { billingUpdated } : {}),
     });
   } catch (error) {
     console.error(error);

@@ -17,6 +17,7 @@ import {
   getPastReservationsByGuest,
   getReservationHistory,
 } from "../controllers/reservationController.js";
+import { protect, canManageReservations } from "../middleware/authMiddleware.js";
 
 const router = express.Router();
 
@@ -33,8 +34,8 @@ router.get("/rooms", checkAvailableRooms);
 // Create a new reservation
 router.post("/", addReservation);
 
-// Update reservation
-router.put("/", updateReservation);
+// Reschedule reservation (see WT-09)
+router.put("/", protect, canManageReservations, updateReservation);
 
 // Get all reservations (with optional query params for filtering) - Admin only
 router.get("/", getReservations);
