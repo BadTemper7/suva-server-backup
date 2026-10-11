@@ -677,7 +677,7 @@ export const transferReservationRoom = async (req, res) => {
     await reservationRoom.save({ session });
 
     if (oldRoom && oldRoom.status !== "maintenance") {
-      oldRoom.status = "to-clean";
+      oldRoom.status = "inactive";
       await oldRoom.save({ session });
     }
 

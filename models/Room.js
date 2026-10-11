@@ -52,7 +52,7 @@ const roomSchema = new mongoose.Schema(
 
     status: {
       type: String,
-      enum: ["active", "maintenance", "clean", "to-clean"],
+      enum: ["active", "maintenance", "clean", "inactive"],
       default: "active",
     },
 

@@ -13,6 +13,7 @@ import {
   protect,
   adminOnly,
   receptionistOrAdmin,
+  optionalAuth,
 } from "../middleware/authMiddleware.js";
 
 const router = express.Router();
@@ -24,7 +25,7 @@ const upload = multer({ storage });
 /* -------------------- ROUTES -------------------- */
 router.post("/", protect, adminOnly, upload.array("images"), createRoom);
 router.get("/operations-logs", protect, receptionistOrAdmin, getOperationLogs);
-router.get("/", getRooms);
+router.get("/", optionalAuth, getRooms);
 router.get("/:id", protect, receptionistOrAdmin, getRoomById);
 router.put("/:id", protect, receptionistOrAdmin, upload.array("images"), updateRoom);
 router.delete("/:id", protect, adminOnly, deleteRoom);

@@ -6,11 +6,11 @@ import OperationLog from "../models/OperationLog.js";
 import { fetchOperationsLogsReportPayload } from "../utils/operationsLogsReport.js";
 import { parseHourlyRatesFromBody } from "../utils/stayPricing.js";
 
-const ALLOWED_ROOM_STATUSES = ["active", "maintenance", "clean", "to-clean"];
+const ALLOWED_ROOM_STATUSES = ["active", "maintenance", "clean", "inactive"];
 const { Reservation, ReservationRoom } = ReservationModels;
 
 function validateRoomStatus(status) {
-  if (!status || status === "inactive" || !ALLOWED_ROOM_STATUSES.includes(status)) {
+  if (!status || !ALLOWED_ROOM_STATUSES.includes(status)) {
     return "Invalid status";
   }
   return null;
@@ -170,7 +170,7 @@ export const createRoom = async (req, res) => {
     const action =
       normalized === "maintenance"
         ? "maintenance"
-        : normalized === "to-clean"
+        : normalized === "inactive"
           ? "cleaning"
           : null;
 
@@ -370,7 +370,7 @@ export const updateRoom = async (req, res) => {
     const action =
       normalized === "maintenance"
         ? "maintenance"
-        : normalized === "to-clean"
+        : normalized === "inactive"
           ? "cleaning"
           : null;
 
@@ -462,12 +462,28 @@ export const updateRoom = async (req, res) => {
 /* -------------------- GET ROOMS -------------------- */
 export const getRooms = async (req, res) => {
   try {
-    const { category } = req.query;
+    const { category, status } = req.query;
     let query = {};
 
     // Filter by category if provided
     if (category && (category === "room" || category === "cottage")) {
       query.category = category;
+    }
+
+    // This route is public (no `protect`), used by both the staff admin app
+    // (always sends a Bearer token) and the guest site (never does, and
+    // already asks for status=active when browsing). Previously `status` was
+    // silently ignored here entirely. Staff can filter by any status (or see
+    // everything); guests can narrow further but can never see
+    // inactive/maintenance rooms regardless of what they ask for. See WT-03.
+    if (req.user) {
+      if (status && ALLOWED_ROOM_STATUSES.includes(status)) {
+        query.status = status;
+      }
+    } else if (status && ["active", "clean"].includes(status)) {
+      query.status = status;
+    } else {
+      query.status = { $nin: ["inactive", "maintenance"] };
     }
 
     const rooms = await Room.find(query).populate("roomType");

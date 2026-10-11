@@ -522,7 +522,7 @@ export const updateReservationStatus = async (req, res) => {
           if (cleanIds.length > 0) {
             await Room.updateMany(
               { _id: { $in: cleanIds }, status: { $ne: "maintenance" } },
-              { $set: { status: "to-clean" } },
+              { $set: { status: "inactive" } },
               { session },
             );
             const cleaningLogs = unitsToClean.map((unit) => ({
@@ -531,7 +531,7 @@ export const updateReservationStatus = async (req, res) => {
               action: "cleaning",
               reservationId: reservation._id,
               performedBy: actorUserId || reservation.userId || null,
-              reason: "Auto-set to-clean after checkout",
+              reason: "Auto-set inactive (needs cleaning) after checkout",
             }));
             await OperationLog.insertMany(cleaningLogs, { session });
           }

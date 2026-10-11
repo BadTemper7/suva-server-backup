@@ -75,6 +75,41 @@ export const protect = async (req, res, next) => {
   }
 };
 
+// Non-blocking: populates req.user when a valid staff Bearer token is present,
+// otherwise leaves req.user null and continues (for public routes that show
+// more to staff than to guests, e.g. room visibility — see WT-03).
+export const optionalAuth = async (req, res, next) => {
+  const authHeader = req.headers.authorization;
+
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    req.user = null;
+    return next();
+  }
+
+  const token = authHeader.split(" ")[1];
+
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const user = await User.findById(decoded.id);
+
+    if (!user || user.status !== "active") {
+      req.user = null;
+      return next();
+    }
+
+    req.user = {
+      id: decoded.id,
+      username: user.username,
+      email: user.email,
+      role: user.role,
+    };
+  } catch {
+    req.user = null;
+  }
+
+  next();
+};
+
 export const adminOnly = (req, res, next) => {
   if (!["admin", "superadmin"].includes(req.user?.role)) {
     return res.status(403).json({ message: "Access forbidden: Admins only" });
