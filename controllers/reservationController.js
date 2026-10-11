@@ -1,4 +1,5 @@
 import ReservationModels from "../models/Reservation.js";
+import ReservationHistory from "../models/ReservationHistory.js";
 import Billing from "../models/Billing.js";
 import Receipt from "../models/Receipt.js";
 import DiscountImage from "../models/DiscountImage.js";
@@ -7,6 +8,7 @@ import PaymentType from "../models/PaymentType.js";
 import Room from "../models/Room.js";
 import PaymentOption from "../models/PaymentOption.js";
 import Guest from "../models/Guest.js";
+import User from "../models/userModel.js";
 import { broadcast } from "../wsServer.js";
 import cloudinary from "../config/cloudinary.js";
 import mongoose from "mongoose";
@@ -19,6 +21,7 @@ import { sendReservationStatusEmail } from "../config/email.js";
 import { emailQueue } from "../utils/emailQueue.js";
 import OperationLog from "../models/OperationLog.js";
 import { computeBillingTotals } from "../utils/billingCalc.js";
+import { logReservationHistory } from "../utils/reservationHistory.js";
 import {
   resolveStay,
   getRoomStayCharge,
@@ -469,17 +472,44 @@ export const updateReservationStatus = async (req, res) => {
       reservation.actualCheckOutAt = new Date();
     }
 
-    // Add notes if provided
+    // Add notes if provided — `notes` is a plain string on the schema
+    // (used for the original booking note / complimentary-reservation
+    // detection / PDF export elsewhere); this used to push {text,userId,date}
+    // objects onto it as if it were an array, which never matched the
+    // schema. See WT-04.
     if (notes) {
-      reservation.notes = reservation.notes || [];
-      reservation.notes.push({
-        text: notes,
-        userId: actorUserId,
-        date: new Date(),
-      });
+      const trimmedNote = String(notes).trim();
+      if (trimmedNote) {
+        reservation.notes = reservation.notes
+          ? `${reservation.notes}\n${trimmedNote}`
+          : trimmedNote;
+      }
     }
 
     await reservation.save({ session });
+
+    if (previousStatus !== status) {
+      // This route has no auth middleware, so req.user is never populated —
+      // the frontend sends userId directly instead. Resolve it to a real
+      // username so history doesn't just say generic "Staff" every time.
+      let actorLabel = req.user?.username;
+      if (!actorLabel && actorUserId) {
+        const actingUser = await User.findById(actorUserId)
+          .select("username")
+          .session(session);
+        actorLabel = actingUser?.username;
+      }
+
+      await logReservationHistory({
+        reservationId: reservation._id,
+        actorUserId,
+        actorLabel,
+        action: "status_changed",
+        summary: `Status changed from ${previousStatus} to ${status}`,
+        changes: { field: "status", from: previousStatus, to: status },
+        session,
+      });
+    }
 
     if (
       (status === "checked_in" && previousStatus !== "checked_in") ||
@@ -770,6 +800,12 @@ export const updateReservation = async (req, res) => {
     if (!reservation)
       return res.status(404).json({ error: "Reservation not found" });
 
+    const before = {
+      checkIn: reservation.checkIn,
+      checkOut: reservation.checkOut,
+      stayType: reservation.stayType,
+    };
+
     const stay = resolveStay({
       stayType: stayType || reservation.stayType,
       hourlyDuration:
@@ -789,6 +825,37 @@ export const updateReservation = async (req, res) => {
     reservation.stayType = stay.stayType;
     reservation.hourlyDuration = stay.hourlyDuration;
     await reservation.save();
+
+    // This endpoint has no auth middleware today (tracked separately under
+    // WT-09, which rebuilds it for the reschedule feature) - req.user is
+    // read here so actor tracking starts working the moment that lands,
+    // without touching this logging again.
+    const datesChanged =
+      before.checkIn?.getTime?.() !== reservation.checkIn?.getTime?.() ||
+      before.checkOut?.getTime?.() !== reservation.checkOut?.getTime?.() ||
+      before.stayType !== reservation.stayType;
+
+    if (datesChanged) {
+      await logReservationHistory({
+        reservationId: reservation._id,
+        actorUserId: req.user?._id || req.user?.id || null,
+        actorLabel: req.user?.username,
+        action: "dates_changed",
+        summary: `Dates changed from ${before.checkIn?.toISOString?.() || before.checkIn} - ${before.checkOut?.toISOString?.() || before.checkOut} to ${reservation.checkIn.toISOString()} - ${reservation.checkOut.toISOString()}`,
+        changes: {
+          before: {
+            checkIn: before.checkIn,
+            checkOut: before.checkOut,
+            stayType: before.stayType,
+          },
+          after: {
+            checkIn: reservation.checkIn,
+            checkOut: reservation.checkOut,
+            stayType: reservation.stayType,
+          },
+        },
+      });
+    }
 
     return res.status(200).json({
       message: "Reservation updated and billing recalculated",
@@ -862,6 +929,26 @@ export const getReservationById = async (req, res) => {
       success: true,
       reservation,
     });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: error.message });
+  }
+};
+
+// --- GET RESERVATION HISTORY --- (see WT-04)
+export const getReservationHistory = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!mongoose.isValidObjectId(id)) {
+      return res.status(400).json({ error: "Invalid reservation ID" });
+    }
+
+    const history = await ReservationHistory.find({ reservationId: id })
+      .sort({ createdAt: -1 })
+      .lean();
+
+    return res.status(200).json({ success: true, history });
   } catch (error) {
     console.error(error);
     return res.status(500).json({ error: error.message });

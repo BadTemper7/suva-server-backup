@@ -3,6 +3,7 @@ import mongoose from "mongoose";
 import Billing from "../models/Billing.js";
 import Receipt from "../models/Receipt.js";
 import ReservationModel from "../models/Reservation.js";
+import ReservationHistory from "../models/ReservationHistory.js";
 import { createNotification } from "../models/Notification.js";
 import { emailQueue } from "../utils/emailQueue.js";
 import { broadcast } from "../wsServer.js";
@@ -112,6 +113,18 @@ export async function cancelExpiredReservations() {
           cancellationReason: `Expired - No confirmation within ${expirationHours} hours`,
         },
       },
+      { session },
+    );
+
+    await ReservationHistory.insertMany(
+      expiredReservations.map((reservation) => ({
+        reservationId: reservation._id,
+        actorUserId: null,
+        actorLabel: "System",
+        action: "status_changed",
+        summary: `Status changed from pending to cancelled (auto-expired after ${expirationHours}h with no confirmation)`,
+        changes: { field: "status", from: "pending", to: "cancelled" },
+      })),
       { session },
     );
 

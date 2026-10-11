@@ -15,6 +15,7 @@ import {
   getReservationsByGuest,
   getUpcomingReservationsByGuest,
   getPastReservationsByGuest,
+  getReservationHistory,
 } from "../controllers/reservationController.js";
 
 const router = express.Router();
@@ -43,6 +44,9 @@ router.get("/:id", getReservationById);
 
 // Update reservation status
 router.patch("/:id/status", updateReservationStatus);
+
+// Reservation change history (see WT-04)
+router.get("/:id/history", getReservationHistory);
 
 // ==================== REPORT GENERATION ====================
 // Report generation routes

@@ -10,8 +10,23 @@ import DiscountImg from "../models/DiscountImage.js";
 import Receipt from "../models/Receipt.js";
 import { roomOffersHourlyPackage } from "../utils/stayPricing.js";
 import { computeBillingTotals } from "../utils/billingCalc.js";
+import { logReservationHistory } from "../utils/reservationHistory.js";
 
 const { Reservation, ReservationRoom } = ReservationModels;
+
+// Shared across the room/add-on mutation endpoints below for WT-04 history logging.
+function actorFromReq(req) {
+  return {
+    actorUserId: req.user?._id || req.user?.id || null,
+    actorLabel: req.user?.username,
+  };
+}
+
+async function roomLabel(roomId) {
+  const r = await Room.findById(roomId).select("roomNumber category").lean();
+  if (!r) return "a room";
+  return `${r.category === "cottage" ? "Cottage" : "Room"} ${r.roomNumber}`;
+}
 
 // Helper function to validate rooms exist
 async function validateRoomsExist(roomIds) {
@@ -233,6 +248,17 @@ export const addReservationRooms = async (req, res) => {
     // Update billing after adding rooms
     await generateBillingForUpdatedReservation(reservationId);
 
+    const addedLabels = await Promise.all(
+      (rooms || []).map((r) => roomLabel(r.roomId)),
+    );
+    await logReservationHistory({
+      reservationId,
+      ...actorFromReq(req),
+      action: "room_added",
+      summary: `Added ${addedLabels.join(", ")}`,
+      changes: { roomIds: (rooms || []).map((r) => r.roomId) },
+    });
+
     return res.status(201).json({
       message: "Rooms added to reservation successfully",
     });
@@ -269,12 +295,25 @@ export const updateReservationRoom = async (req, res) => {
       await validateAddOnStock(reservation, addOns, reservationRoom._id);
     }
 
+    const beforeAddOns = (reservationRoom.addOns || []).map((a) => ({
+      addOnId: a.addOnId,
+      quantity: a.quantity,
+    }));
+
     // Update add-ons
     reservationRoom.addOns = addOns || [];
     await reservationRoom.save();
 
     // Update billing after updating add-ons
     await generateBillingForUpdatedReservation(reservationRoom.reservationId);
+
+    await logReservationHistory({
+      reservationId: reservationRoom.reservationId,
+      ...actorFromReq(req),
+      action: "addon_changed",
+      summary: `Updated add-ons for ${await roomLabel(reservationRoom.roomId)}`,
+      changes: { before: beforeAddOns, after: reservationRoom.addOns },
+    });
 
     return res.status(200).json({
       message: "Reservation room updated successfully",
@@ -353,6 +392,15 @@ export const removeReservationRooms = async (req, res) => {
     // Update billing after removing rooms
     await generateBillingForUpdatedReservation(reservationId);
 
+    const removedLabels = await Promise.all(roomIds.map(roomLabel));
+    await logReservationHistory({
+      reservationId,
+      ...actorFromReq(req),
+      action: "room_removed",
+      summary: `Removed ${removedLabels.join(", ")}`,
+      changes: { roomIds },
+    });
+
     return res.status(200).json({
       message: "Rooms removed from reservation successfully",
       deletedCount: deleteResult.deletedCount,
@@ -375,6 +423,11 @@ export const deleteMultipleReservationRooms = async (req, res) => {
       mongoose.isValidObjectId(id),
     );
 
+    const toDelete = await ReservationRoom.find({
+      _id: { $in: validIds },
+      reservationId,
+    }).select("roomId");
+
     const deleteResult = await ReservationRoom.deleteMany({
       _id: { $in: validIds },
       reservationId,
@@ -382,6 +435,19 @@ export const deleteMultipleReservationRooms = async (req, res) => {
 
     // Update billing after deleting rooms
     await generateBillingForUpdatedReservation(reservationId);
+
+    if (toDelete.length > 0) {
+      const removedLabels = await Promise.all(
+        toDelete.map((rr) => roomLabel(rr.roomId)),
+      );
+      await logReservationHistory({
+        reservationId,
+        ...actorFromReq(req),
+        action: "room_removed",
+        summary: `Removed ${removedLabels.join(", ")}`,
+        changes: { roomIds: toDelete.map((rr) => rr.roomId) },
+      });
+    }
 
     return res.status(200).json({
       success: true,
@@ -444,6 +510,14 @@ export const addAddOnsToRoom = async (req, res) => {
     // Update billing
     await generateBillingForUpdatedReservation(reservationRoom.reservationId);
 
+    await logReservationHistory({
+      reservationId: reservationRoom.reservationId,
+      ...actorFromReq(req),
+      action: "addon_changed",
+      summary: `Added add-ons to ${await roomLabel(reservationRoom.roomId)}`,
+      changes: { added: addOns, after: reservationRoom.addOns },
+    });
+
     return res.status(200).json({
       message: "Add-ons added successfully",
       success: true,
@@ -476,6 +550,14 @@ export const removeAddOnsFromRoom = async (req, res) => {
 
     // Update billing
     await generateBillingForUpdatedReservation(reservationRoom.reservationId);
+
+    await logReservationHistory({
+      reservationId: reservationRoom.reservationId,
+      ...actorFromReq(req),
+      action: "addon_changed",
+      summary: `Removed add-ons from ${await roomLabel(reservationRoom.roomId)}`,
+      changes: { removedAddOnIds: addOnIds, after: reservationRoom.addOns },
+    });
 
     return res.status(200).json({
       message: "Add-ons removed successfully",
@@ -524,6 +606,7 @@ export const updateAddOnQuantity = async (req, res) => {
     }
 
     // Validate stock with new quantity
+    const previousQuantity = reservationRoom.addOns[addOnIndex].quantity;
     const updatedAddOns = [...reservationRoom.addOns];
     updatedAddOns[addOnIndex].quantity = quantity;
 
@@ -538,6 +621,14 @@ export const updateAddOnQuantity = async (req, res) => {
 
     // Update billing
     await generateBillingForUpdatedReservation(reservationRoom.reservationId);
+
+    await logReservationHistory({
+      reservationId: reservationRoom.reservationId,
+      ...actorFromReq(req),
+      action: "addon_changed",
+      summary: `Updated add-on quantity for ${await roomLabel(reservationRoom.roomId)} from ${previousQuantity} to ${quantity}`,
+      changes: { addOnId, from: previousQuantity, to: quantity },
+    });
 
     return res.status(200).json({
       message: "Add-on quantity updated successfully",
@@ -715,6 +806,16 @@ export const transferReservationRoom = async (req, res) => {
       ],
       { session },
     );
+
+    await logReservationHistory({
+      reservationId: reservation._id,
+      actorUserId,
+      actorLabel: req.user?.username,
+      action: "room_transferred",
+      summary: `Moved from ${oldRoom?.roomNumber || "previous room"} to ${newRoom.roomNumber}: ${transferReason}`,
+      changes: { oldRoomId, newRoomId: newRoom._id, reason: transferReason },
+      session,
+    });
 
     await session.commitTransaction();
     session.endSession();
