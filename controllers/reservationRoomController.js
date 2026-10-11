@@ -5,10 +5,11 @@ import AddOn from "../models/AddOn.js";
 import mongoose from "mongoose";
 import Billing from "../models/Billing.js";
 import OperationLog from "../models/OperationLog.js";
-import {
-  getRoomStayCharge,
-  roomOffersHourlyPackage,
-} from "../utils/stayPricing.js";
+import Discount from "../models/Discount.js";
+import DiscountImg from "../models/DiscountImage.js";
+import Receipt from "../models/Receipt.js";
+import { roomOffersHourlyPackage } from "../utils/stayPricing.js";
+import { computeBillingTotals } from "../utils/billingCalc.js";
 
 const { Reservation, ReservationRoom } = ReservationModels;
 
@@ -88,12 +89,6 @@ async function validateAddOnStock(
   }
 }
 
-// Helper function to calculate discount
-async function calculateDiscount(reservation) {
-  // Implementation depends on your discount logic
-  return 0;
-}
-
 // Helper function to generate billing
 const generateBillingForUpdatedReservation = async (reservationId) => {
   try {
@@ -110,38 +105,37 @@ const generateBillingForUpdatedReservation = async (reservationId) => {
       .populate("roomId")
       .populate("addOns.addOnId");
 
-    // Calculate subtotal for all rooms and add-ons
-    let subTotal = 0;
-    reservationRooms.forEach((resRoom) => {
-      subTotal += getRoomStayCharge(resRoom.roomId, reservation);
-
-      if (resRoom.addOns && resRoom.addOns.length > 0) {
-        resRoom.addOns.forEach((addOn) => {
-          const addOnRate = addOn.addOnId?.rate || 0;
-          subTotal += addOnRate * addOn.quantity;
-        });
-      }
-    });
-
-    // Compute discount based on any confirmed discount images
-    let discountAmount = await calculateDiscount(reservation);
-
-    // Final total amount after discount
-    const totalAmount = subTotal - discountAmount;
-
-    // Recalculate amountDueNow based on the payment option (partial/full)
-    let amountDueNow = totalAmount;
-    if (reservation.paymentOption) {
-      if (
-        reservation.paymentOption.paymentType === "partial" &&
-        reservation.paymentOption.amount
-      ) {
-        amountDueNow = totalAmount * (reservation.paymentOption.amount / 100);
-      }
-    }
-
     // Find the existing billing or create a new one
     let billing = await Billing.findOne({ reservationId });
+
+    // Same discount/status computation billingController's updateBillingCalc uses —
+    // this used to be a stub that always returned 0 discount (see WT-02).
+    const [discount, discountImg, receipts] = await Promise.all([
+      reservation.discountId ? Discount.findById(reservation.discountId) : null,
+      billing ? DiscountImg.find({ billingId: billing._id }) : [],
+      billing ? Receipt.find({ billingId: billing._id }) : [],
+    ]);
+
+    const {
+      subTotal,
+      discountAmount,
+      totalAmount,
+      amountPaid,
+      amountDueNow,
+      balance,
+      status,
+      isRefundable,
+      refundAmount,
+    } = computeBillingTotals({
+      billing,
+      reservation,
+      reservationRooms,
+      discount,
+      discountImg,
+      receipts,
+      paymentOption: reservation.paymentOption,
+    });
+
     if (!billing) {
       billing = new Billing({
         reservationId,
@@ -149,12 +143,22 @@ const generateBillingForUpdatedReservation = async (reservationId) => {
         discountAmount,
         totalAmount,
         amountDueNow,
+        amountPaid,
+        balance,
+        status,
+        isRefundable,
+        refundAmount,
       });
     } else {
       billing.subTotal = subTotal;
       billing.discountAmount = discountAmount;
       billing.totalAmount = totalAmount;
       billing.amountDueNow = amountDueNow;
+      billing.amountPaid = amountPaid;
+      billing.balance = balance;
+      billing.status = status;
+      billing.isRefundable = isRefundable;
+      billing.refundAmount = refundAmount;
     }
 
     await billing.save();

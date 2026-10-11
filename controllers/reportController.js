@@ -8,7 +8,6 @@ import Receipt from "../models/Receipt.js";
 import Guest from "../models/Guest.js";
 import Room from "../models/Room.js";
 import PaymentOption from "../models/PaymentOption.js";
-import PaymentType from "../models/PaymentType.js";
 import {
   fetchOperationsLogsReportPayload,
   fetchOperationsLogsForExport,
@@ -20,6 +19,7 @@ import {
   formatExportFilenameDate,
 } from "../utils/reportExportFormatting.js";
 import { stayTypeLabel } from "../utils/stayPricing.js";
+import { getStartOfDay, getEndOfDay } from "../utils/dateRange.js";
 const { Reservation, ReservationRoom } = ReservationModel;
 // Helper function to generate date ranges
 const getDateRange = (period, startDate, endDate) => {
@@ -40,8 +40,10 @@ const getDateRange = (period, startDate, endDate) => {
       end = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
       break;
     case "custom":
-      start = new Date(startDate);
-      end = new Date(endDate);
+      // startDate/endDate are "YYYY-MM-DD" — must parse as local midnight, not
+      // UTC midnight, or the window shifts by Manila's +8h offset (see WT-02).
+      start = getStartOfDay(startDate);
+      end = getEndOfDay(endDate);
       break;
     default:
       start = new Date(now.setHours(0, 0, 0, 0));
@@ -368,43 +370,48 @@ export const getRevenueReport = async (req, res) => {
     const { period, startDate, endDate } = req.query;
     const { start, end } = getDateRange(period, startDate, endDate);
 
-    const billings = await Billing.find({
+    // Anchored on receipts actually received in this window (not on when the
+    // billing record was created) — a billing created outside the window but
+    // paid inside it still counts as revenue for this period. See WT-02.
+    const receipts = await Receipt.find({
       createdAt: { $gte: start, $lte: end },
-      status: { $in: ["paid", "partial"] },
+      status: "confirmed",
     })
       .populate({
-        path: "reservationId",
-        populate: [
-          {
-            path: "guestId",
-            select: "firstName lastName",
-          },
-          {
-            path: "paymentOption",
-            select: "name",
-          },
-        ],
+        path: "billingId",
+        select: "billingNumber totalAmount balance status reservationId",
+        populate: {
+          path: "reservationId",
+          select: "reservationNumber",
+          populate: [
+            { path: "guestId", select: "firstName lastName" },
+            { path: "paymentOption", select: "name" },
+          ],
+        },
       })
-      .populate({
-        path: "receipts",
-        select: "amountPaid paymentType status",
-        match: { status: "confirmed" },
-      });
+      .populate({ path: "paymentType", select: "name" });
 
-    // Calculate totals
-    const totals = billings.reduce(
-      (acc, billing) => {
-        const receiptsTotal =
-          billing.receipts?.reduce(
-            (sum, receipt) => sum + (receipt.amountPaid || 0),
-            0,
-          ) || 0;
+    // totalRevenue/totalPaid = cash actually collected in this window.
+    // totalAmount/totalBalance are deduped per billing so a billing paid more
+    // than once in-window doesn't double-count its totals.
+    const seenBillingIds = new Set();
+    const totals = receipts.reduce(
+      (acc, receipt) => {
+        const billing = receipt.billingId;
+        const billingId = billing?._id?.toString();
+        const isFirstTimeSeeingBilling =
+          billingId && !seenBillingIds.has(billingId);
+        if (isFirstTimeSeeingBilling) seenBillingIds.add(billingId);
 
         return {
-          totalRevenue: acc.totalRevenue + receiptsTotal,
-          totalAmount: acc.totalAmount + (billing.totalAmount || 0),
-          totalPaid: acc.totalPaid + (billing.amountPaid || 0),
-          totalBalance: acc.totalBalance + (billing.balance || 0),
+          totalRevenue: acc.totalRevenue + (receipt.amountPaid || 0),
+          totalAmount:
+            acc.totalAmount +
+            (isFirstTimeSeeingBilling ? billing?.totalAmount || 0 : 0),
+          totalPaid: acc.totalPaid + (receipt.amountPaid || 0),
+          totalBalance:
+            acc.totalBalance +
+            (isFirstTimeSeeingBilling ? billing?.balance || 0 : 0),
           count: acc.count + 1,
         };
       },
@@ -419,39 +426,31 @@ export const getRevenueReport = async (req, res) => {
 
     // Group by payment method
     const paymentMethodSummary = {};
-    const paymentTypes = await PaymentType.find({ isActive: true });
+    for (const receipt of receipts) {
+      const methodName = receipt.paymentType?.name || "Unknown";
 
-    for (const billing of billings) {
-      for (const receipt of billing.receipts || []) {
-        // Fix: Use the paymentType ObjectId directly
-        const paymentTypeId = receipt.paymentType?.toString();
-        const paymentType = paymentTypes.find(
-          (pt) => pt._id.toString() === paymentTypeId,
-        );
-        const methodName = paymentType ? paymentType.name : "Unknown";
-
-        if (!paymentMethodSummary[methodName]) {
-          paymentMethodSummary[methodName] = {
-            amount: 0,
-            count: 0,
-          };
-        }
-
-        paymentMethodSummary[methodName].amount += receipt.amountPaid || 0;
-        paymentMethodSummary[methodName].count += 1;
+      if (!paymentMethodSummary[methodName]) {
+        paymentMethodSummary[methodName] = {
+          amount: 0,
+          count: 0,
+        };
       }
+
+      paymentMethodSummary[methodName].amount += receipt.amountPaid || 0;
+      paymentMethodSummary[methodName].count += 1;
     }
 
-    // Prepare transactions data
-    const transactions = billings.map((billing) => ({
-      billingNumber: billing.billingNumber,
-      reservationNumber: billing.reservationId?.reservationNumber,
-      guest: billing.reservationId?.guestId,
-      totalAmount: billing.totalAmount,
-      amountPaid: billing.amountPaid,
-      balance: billing.balance,
-      status: billing.status,
-      paymentOption: billing.reservationId?.paymentOption?.name,
+    // One row per payment received in this window (not one row per billing)
+    const transactions = receipts.map((receipt) => ({
+      billingNumber: receipt.billingId?.billingNumber,
+      reservationNumber: receipt.billingId?.reservationId?.reservationNumber,
+      guest: receipt.billingId?.reservationId?.guestId,
+      totalAmount: receipt.billingId?.totalAmount,
+      amountPaid: receipt.amountPaid,
+      balance: receipt.billingId?.balance,
+      status: receipt.billingId?.status,
+      paymentOption: receipt.billingId?.reservationId?.paymentOption?.name,
+      paymentDate: receipt.createdAt,
     }));
 
     res.status(200).json({

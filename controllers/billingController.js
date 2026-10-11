@@ -9,6 +9,8 @@ import Receipt from "../models/Receipt.js";
 import Discount from "../models/Discount.js";
 import PaymentOption from "../models/PaymentOption.js";
 import { getRoomStayCharge } from "../utils/stayPricing.js";
+import { computeBillingTotals } from "../utils/billingCalc.js";
+import { getStartOfDay, getEndOfDay } from "../utils/dateRange.js";
 import { buildInvoicePdfBuffer } from "../utils/invoicePdf.js";
 import { sendInvoiceEmail } from "../config/email.js";
 
@@ -288,139 +290,25 @@ export const updateBillingCalc = async (req, res) => {
         Receipt.find({ billingId }),
       ]);
 
-    const nights =
-      reservation.stayType === "hourly"
-        ? 0
-        : Math.max(1, Number(reservation.nights) || 1);
-
-    // Total amount paid from receipts — unless a refund was already applied (amountPaid is authoritative)
-    const receiptPaid = receipts.reduce(
-      (sum, r) => (r.status === "confirmed" ? sum + r.amountPaid : sum),
-      0,
-    );
-    const amountPaid = billing.refundedAt
-      ? Number(billing.amountPaid || 0)
-      : receiptPaid;
-
-    // Per room totals + subtotal
-    let subTotal = 0;
-    const reservationRoomsTotal = reservationRooms.map((room) => {
-      const r = room.toObject();
-      const roomRateTotal = getRoomStayCharge(r.roomId, reservation);
-      const addOnsTotal = r.addOns.reduce(
-        (sum, a) => sum + a.quantity * a.addOnId.rate,
-        0,
-      );
-      const totalAmount = roomRateTotal + addOnsTotal;
-      subTotal += totalAmount;
-
-      return {
-        ...r,
-        roomRateTotal,
-        addOnsTotal,
-        totalAmount,
-      };
+    const {
+      nights,
+      subTotal,
+      discountAmount,
+      totalAmount,
+      amountPaid,
+      amountDueNow,
+      status,
+      isRefundable,
+      refundAmount,
+    } = computeBillingTotals({
+      billing,
+      reservation,
+      reservationRooms,
+      discount,
+      discountImg,
+      receipts,
+      paymentOption,
     });
-
-    // Discount computation
-    let discountAmount = 0;
-    const percent = discount?.discountPercent || 0;
-
-    if (discount && (percent > 0 || discount.isPerId)) {
-      const resDiscountIdStr = reservation.discountId
-        ? String(reservation.discountId)
-        : "";
-      const confirmedImgs = discountImg.filter(
-        (img) => img.status === "confirmed",
-      );
-      const confirmedForSelectedDiscount = resDiscountIdStr
-        ? confirmedImgs.filter(
-            (img) =>
-              img.discountId && String(img.discountId) === resDiscountIdStr,
-          )
-        : [];
-      const totalPax = Math.max(
-        1,
-        Number(reservation.adults || 0) + Number(reservation.children || 0),
-      );
-      const declaredEligible = Math.min(
-        Math.max(
-          0,
-          Number(reservation.seniorCitizenCount || 0) +
-            Number(reservation.pwdCount || 0),
-        ),
-        totalPax,
-      );
-      const maxByDiscount =
-        discount.maxRoomCount != null
-          ? Math.min(declaredEligible, discount.maxRoomCount)
-          : declaredEligible;
-      const validIdCount = Math.min(
-        maxByDiscount,
-        confirmedForSelectedDiscount.length,
-      );
-
-      if (discount.isPerId) {
-        // (base price / pax) × discount% × min(declared senior+pwd, confirmed IDs, caps)
-        const ratePct = Number(discount.discountPercent || 20) / 100;
-        const basePerPax = subTotal / totalPax;
-        discountAmount = basePerPax * ratePct * validIdCount;
-      } else if (discount.appliesToAllRooms) {
-        discountAmount = subTotal * (percent / 100);
-      } else if (reservationRoomsTotal.length) {
-        const sortedRooms = [...reservationRoomsTotal].sort((a, b) =>
-          discount.discountPriority === "lowest"
-            ? a.totalAmount - b.totalAmount
-            : b.totalAmount - a.totalAmount,
-        );
-
-        discountAmount = sortedRooms[0].totalAmount * (percent / 100);
-      }
-    }
-
-    discountAmount = Math.min(discountAmount, subTotal);
-    const totalAmount = subTotal - discountAmount;
-
-    // Amount due now
-    const amountDueNow =
-      paymentOption.paymentType === "full"
-        ? totalAmount
-        : totalAmount * (paymentOption.amount / 100);
-
-    // Billing status and refundable flag
-    let status = "unpaid";
-    let isRefundable = false;
-
-    if (amountPaid > 0) {
-      if (paymentOption.paymentType === "full") {
-        if (amountPaid >= totalAmount) {
-          status = "paid";
-          isRefundable = true;
-        } else {
-          status = "partial";
-          // Even if not fully paid, still refundable if they paid something
-          isRefundable = true;
-        }
-      } else if (paymentOption.paymentType === "partial") {
-        if (amountPaid >= amountDueNow) {
-          status = "partial";
-          isRefundable = true;
-        } else if (amountPaid > 0 && amountPaid < amountDueNow) {
-          status = "partial";
-          // Still refundable if they paid something
-          isRefundable = true;
-        }
-      }
-    } else {
-      status = "unpaid";
-      isRefundable = false;
-    }
-
-    if (billing.refundedAt) {
-      isRefundable = false;
-    }
-
-    const refundAmount = amountPaid * 0.5;
 
     // Update billing
     billing.subTotal = subTotal;
@@ -519,30 +407,6 @@ export const generateBillingReport = async (req, res) => {
     } = req.query;
 
     let start, end;
-
-    // Helper function to parse date string and return Date object with local timezone
-    const parseLocalDate = (dateStr) => {
-      // Handle format like "2026-03-28"
-      const [year, month, day] = dateStr.split("-");
-      // Create date in local timezone (Philippine Time)
-      return new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
-    };
-
-    // Helper function to get start of day in local timezone (UTC+8)
-    const getStartOfDay = (dateStr) => {
-      const d = parseLocalDate(dateStr);
-      // Return date with local time at 00:00:00
-      // This will convert to UTC automatically when saved to MongoDB
-      return d;
-    };
-
-    // Helper function to get end of day in local timezone (UTC+8)
-    const getEndOfDay = (dateStr) => {
-      const d = parseLocalDate(dateStr);
-      // Set to end of day local time
-      d.setHours(23, 59, 59, 999);
-      return d;
-    };
 
     // Calculate date range based on period
     switch (period) {
@@ -747,6 +611,16 @@ export const generateBillingReport = async (req, res) => {
   }
 };
 /**
+ * Cash actually collected on a billing (confirmed receipts), counted only for
+ * billings that have received payment. Shared by calculateBillingSummary and
+ * getPeriodBreakdown so the headline number and the chart agree (see WT-02).
+ */
+function getCollectedAmount(bill) {
+  if (bill.status !== "paid" && bill.status !== "partial") return 0;
+  return bill.receipts?.reduce((sum, r) => sum + (r.amountPaid || 0), 0) || 0;
+}
+
+/**
  * Calculate summary statistics from billings
  */
 function calculateBillingSummary(billings) {
@@ -774,9 +648,13 @@ function calculateBillingSummary(billings) {
   const dailyRevenue = {};
 
   billings.forEach((bill) => {
-    // Revenue calculations
-    summary.totalRevenue += bill.totalAmount || 0;
-    summary.totalAmountPaid += bill.amountPaid || 0;
+    // Revenue = cash actually collected, matching the definition the Reports
+    // page's Revenue Report uses (previously this summed every billing's
+    // totalAmount regardless of paid/unpaid/refunded/voided status; see WT-02).
+    const collectedAmount = getCollectedAmount(bill);
+
+    summary.totalRevenue += collectedAmount;
+    summary.totalAmountPaid += collectedAmount;
     summary.totalBalance += bill.balance || 0;
     summary.totalDiscount += bill.discountAmount || 0;
     summary.totalSubtotal += bill.subTotal || 0;
@@ -788,8 +666,7 @@ function calculateBillingSummary(billings) {
 
     // Daily revenue tracking
     const dateKey = bill.createdAt.toISOString().split("T")[0];
-    dailyRevenue[dateKey] =
-      (dailyRevenue[dateKey] || 0) + (bill.totalAmount || 0);
+    dailyRevenue[dateKey] = (dailyRevenue[dateKey] || 0) + collectedAmount;
   });
 
   // Calculate averages
@@ -842,7 +719,7 @@ function getPeriodBreakdown(billings, period, start, end) {
 
         breakdown.labels.push(`${hour}:00`);
         breakdown.revenue.push(
-          hourBillings.reduce((sum, bill) => sum + (bill.totalAmount || 0), 0),
+          hourBillings.reduce((sum, bill) => sum + getCollectedAmount(bill), 0),
         );
         breakdown.count.push(hourBillings.length);
         breakdown.paid.push(
@@ -874,7 +751,7 @@ function getPeriodBreakdown(billings, period, start, end) {
           day.toLocaleDateString("en-PH", { weekday: "short", day: "numeric" }),
         );
         breakdown.revenue.push(
-          dayBillings.reduce((sum, bill) => sum + (bill.totalAmount || 0), 0),
+          dayBillings.reduce((sum, bill) => sum + getCollectedAmount(bill), 0),
         );
         breakdown.count.push(dayBillings.length);
         breakdown.paid.push(
@@ -902,7 +779,7 @@ function getPeriodBreakdown(billings, period, start, end) {
 
         breakdown.labels.push(`Week ${week}`);
         breakdown.revenue.push(
-          weekBillings.reduce((sum, bill) => sum + (bill.totalAmount || 0), 0),
+          weekBillings.reduce((sum, bill) => sum + getCollectedAmount(bill), 0),
         );
         breakdown.count.push(weekBillings.length);
         breakdown.paid.push(
@@ -929,7 +806,7 @@ function getPeriodBreakdown(billings, period, start, end) {
           monthStart.toLocaleDateString("en-PH", { month: "short" }),
         );
         breakdown.revenue.push(
-          monthBillings.reduce((sum, bill) => sum + (bill.totalAmount || 0), 0),
+          monthBillings.reduce((sum, bill) => sum + getCollectedAmount(bill), 0),
         );
         breakdown.count.push(monthBillings.length);
         breakdown.paid.push(
@@ -1482,25 +1359,6 @@ async function generateReportData(queryParams) {
   } = queryParams;
 
   let start, end;
-
-  // Helper function to parse date string and return Date object with local timezone
-  const parseLocalDate = (dateStr) => {
-    const [year, month, day] = dateStr.split("-");
-    return new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
-  };
-
-  // Helper function to get start of day in local timezone
-  const getStartOfDay = (dateStr) => {
-    const d = parseLocalDate(dateStr);
-    return d;
-  };
-
-  // Helper function to get end of day in local timezone
-  const getEndOfDay = (dateStr) => {
-    const d = parseLocalDate(dateStr);
-    d.setHours(23, 59, 59, 999);
-    return d;
-  };
 
   // Calculate date range based on period (using local timezone)
   switch (period) {
