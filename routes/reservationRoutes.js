@@ -16,6 +16,7 @@ import {
   getUpcomingReservationsByGuest,
   getPastReservationsByGuest,
   getReservationHistory,
+  trackBooking,
 } from "../controllers/reservationController.js";
 import { protect, canManageReservations } from "../middleware/authMiddleware.js";
 
@@ -29,6 +30,11 @@ router.get("/guest/:guestId/past", getPastReservationsByGuest);
 
 // Check available rooms (public)
 router.get("/rooms", checkAvailableRooms);
+
+// Track a booking by reservation number + email, no login (see WT-08).
+// Must be registered before the "/:id" route below so "track" isn't
+// swallowed as an :id param.
+router.get("/track", trackBooking);
 
 // ==================== RESERVATION CRUD ====================
 // Create a new reservation

@@ -1388,8 +1388,11 @@ export const sendReservationStatusEmail = async (
             <p style="color:#222;font-size:14px;margin:0 0 10px 0;line-height:1.55;">
               <strong>Grace period:</strong> Aim to arrive at your scheduled check-in time. If you will be late, please contact us. A <strong>2-hour grace period</strong> applies after <strong>2:00 PM</strong> on your check-in date; arrivals beyond that without notice may be treated as a no-show under resort policy.
             </p>
-            <p style="color:#222;font-size:14px;margin:0;line-height:1.55;">
+            <p style="color:#222;font-size:14px;margin:0 0 10px 0;line-height:1.55;">
               <strong>Waiver:</strong> Please bring a signed, printed copy of the attached Release and Waiver form (<strong>RELEASE AND WAIVER- NEW2026.pdf</strong>) on the day of your stay — reservations without a signed waiver on hand at check-in may be delayed.
+            </p>
+            <p style="color:#222;font-size:14px;margin:0;line-height:1.55;">
+              <strong>Track your booking anytime:</strong> visit <a href="${process.env.FRONTEND_URL}/track-booking" style="color:#0c2bfc;">${escapeEmailHtml(process.env.FRONTEND_URL || "")}/track-booking</a> and enter your reservation number (<strong>${escapeEmailHtml(reservation.reservationNumber)}</strong>) with this email address.
             </p>
           </div>`
       : "";

@@ -1065,6 +1065,79 @@ export const getReservationById = async (req, res) => {
   }
 };
 
+// --- TRACK BOOKING (public, no login) --- (see WT-08)
+// Basic in-memory per-IP rate limit: reservation numbers + email are a thin
+// check, not a real auth system, so this is a brute-force speed bump, not a
+// security boundary. Resets on server restart — fine for this purpose.
+const trackAttemptsByIp = new Map();
+const TRACK_RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000;
+const TRACK_RATE_LIMIT_MAX = 20;
+
+function isRateLimited(ip) {
+  const now = Date.now();
+  const entry = trackAttemptsByIp.get(ip);
+  if (!entry || now - entry.windowStart > TRACK_RATE_LIMIT_WINDOW_MS) {
+    trackAttemptsByIp.set(ip, { count: 1, windowStart: now });
+    return false;
+  }
+  entry.count += 1;
+  return entry.count > TRACK_RATE_LIMIT_MAX;
+}
+
+export const trackBooking = async (req, res) => {
+  try {
+    const ip = req.ip || req.socket?.remoteAddress || "unknown";
+    if (isRateLimited(ip)) {
+      return res.status(429).json({
+        error: "Too many attempts. Please try again later.",
+      });
+    }
+
+    const { reservationNumber, email } = req.query;
+    if (!reservationNumber || !email) {
+      return res
+        .status(400)
+        .json({ error: "reservationNumber and email are required" });
+    }
+
+    const reservation = await Reservation.findOne({
+      reservationNumber: String(reservationNumber).trim(),
+    })
+      .populate("guestId")
+      .populate("paymentOption")
+      .populate("discountId");
+
+    const suppliedEmail = String(email).trim().toLowerCase();
+    const matchesEmail =
+      reservation?.guestId?.email &&
+      reservation.guestId.email.toLowerCase() === suppliedEmail;
+
+    if (!reservation || !matchesEmail) {
+      return res.status(404).json({ error: "No matching reservation found" });
+    }
+
+    const [rooms, billing] = await Promise.all([
+      ReservationRoom.find({ reservationId: reservation._id })
+        .populate("roomId")
+        .populate("addOns.addOnId"),
+      Billing.findOne({ reservationId: reservation._id }).select(
+        "billingNumber status totalAmount amountPaid balance",
+      ),
+    ]);
+
+    return res.status(200).json({
+      reservation: {
+        ...reservation.toObject(),
+        rooms,
+        billing: billing || null,
+      },
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: error.message });
+  }
+};
+
 // --- GET RESERVATION HISTORY --- (see WT-04)
 export const getReservationHistory = async (req, res) => {
   try {
