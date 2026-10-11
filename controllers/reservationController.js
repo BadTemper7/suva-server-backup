@@ -2,6 +2,8 @@ import ReservationModels from "../models/Reservation.js";
 import Billing from "../models/Billing.js";
 import Receipt from "../models/Receipt.js";
 import DiscountImage from "../models/DiscountImage.js";
+import Discount from "../models/Discount.js";
+import PaymentType from "../models/PaymentType.js";
 import Room from "../models/Room.js";
 import PaymentOption from "../models/PaymentOption.js";
 import Guest from "../models/Guest.js";
@@ -16,6 +18,7 @@ import { createNotification } from "../models/Notification.js";
 import { sendReservationStatusEmail } from "../config/email.js";
 import { emailQueue } from "../utils/emailQueue.js";
 import OperationLog from "../models/OperationLog.js";
+import { computeBillingTotals } from "../utils/billingCalc.js";
 import {
   resolveStay,
   getRoomStayCharge,
@@ -410,7 +413,14 @@ export const updateReservationStatus = async (req, res) => {
 
   try {
     const { id } = req.params;
-    const { status, notes, userId, cancelReason } = req.body;
+    const {
+      status,
+      notes,
+      userId,
+      cancelReason,
+      markBillingPaid,
+      settlementPaymentTypeId,
+    } = req.body;
 
     if (!mongoose.isValidObjectId(id))
       return res.status(400).json({ error: "Invalid reservation ID" });
@@ -539,6 +549,151 @@ export const updateReservationStatus = async (req, res) => {
       }
     }
 
+    // --- WT-01: optionally settle the outstanding balance on confirm ---
+    let billingUpdated;
+    if (status === "confirmed" && markBillingPaid) {
+      const billing = await Billing.findOne({
+        reservationId: reservation._id,
+      }).session(session);
+
+      if (!billing) {
+        console.warn(
+          `markBillingPaid requested but no billing exists yet for reservation ${reservation._id}`,
+        );
+      } else if (billing.status === "refunded" || billing.status === "voided") {
+        console.warn(
+          `markBillingPaid requested but billing ${billing._id} is already ${billing.status}`,
+        );
+      } else {
+        const [reservationRooms, discount, discountImg, receipts, paymentOption] =
+          await Promise.all([
+            ReservationRoom.find({ reservationId: reservation._id })
+              .populate("roomId")
+              .populate({
+                path: "addOns",
+                populate: { path: "addOnId", model: "AddOn" },
+              })
+              .session(session),
+            reservation.discountId
+              ? Discount.findById(reservation.discountId).session(session)
+              : null,
+            DiscountImage.find({ billingId: billing._id }).session(session),
+            Receipt.find({ billingId: billing._id }).session(session),
+            PaymentOption.findById(reservation.paymentOption).session(session),
+          ]);
+
+        const current = computeBillingTotals({
+          billing,
+          reservation,
+          reservationRooms,
+          discount,
+          discountImg,
+          receipts,
+          paymentOption,
+        });
+
+        const outstanding = Math.max(
+          0,
+          current.totalAmount - current.amountPaid,
+        );
+
+        if (outstanding <= 0) {
+          billingUpdated = {
+            amountPaid: current.amountPaid,
+            status: current.status,
+            isRefundable: current.isRefundable,
+          };
+        } else {
+          let resolvedPaymentTypeId = settlementPaymentTypeId;
+
+          if (resolvedPaymentTypeId) {
+            const pt = await PaymentType.findById(resolvedPaymentTypeId).session(
+              session,
+            );
+            if (!pt || pt.isReceipt) {
+              await session.abortTransaction();
+              session.endSession();
+              return res.status(400).json({
+                error:
+                  "settlementPaymentTypeId must reference a payment type that doesn't require a receipt image",
+              });
+            }
+          } else {
+            const eligible = await PaymentType.find({
+              isReceipt: false,
+              isActive: true,
+            }).session(session);
+
+            if (eligible.length === 0) {
+              await session.abortTransaction();
+              session.endSession();
+              return res.status(400).json({
+                error:
+                  "No cash/manual payment type is configured — create one before marking billing as paid",
+              });
+            }
+            if (eligible.length > 1) {
+              await session.abortTransaction();
+              session.endSession();
+              return res.status(400).json({
+                error:
+                  "Multiple payment types available — specify settlementPaymentTypeId",
+                eligiblePaymentTypes: eligible.map((pt) => ({
+                  _id: pt._id,
+                  name: pt.name,
+                })),
+              });
+            }
+            resolvedPaymentTypeId = eligible[0]._id;
+          }
+
+          await Receipt.create(
+            [
+              {
+                billingId: billing._id,
+                paymentType: resolvedPaymentTypeId,
+                amountPaid: outstanding,
+                amountReceived: outstanding,
+                status: "confirmed",
+                notes: "Marked fully paid on reservation confirmation",
+              },
+            ],
+            { session },
+          );
+
+          const receiptsAfter = await Receipt.find({
+            billingId: billing._id,
+          }).session(session);
+          const after = computeBillingTotals({
+            billing,
+            reservation,
+            reservationRooms,
+            discount,
+            discountImg,
+            receipts: receiptsAfter,
+            paymentOption,
+          });
+
+          billing.subTotal = after.subTotal;
+          billing.discountAmount = after.discountAmount;
+          billing.totalAmount = after.totalAmount;
+          billing.amountPaid = after.amountPaid;
+          billing.amountDueNow = after.amountDueNow;
+          billing.balance = after.balance;
+          billing.status = after.status;
+          billing.isRefundable = after.isRefundable;
+          billing.refundAmount = after.refundAmount;
+          await billing.save({ session });
+
+          billingUpdated = {
+            amountPaid: after.amountPaid,
+            status: after.status,
+            isRefundable: after.isRefundable,
+          };
+        }
+      }
+    }
+
     await session.commitTransaction();
     session.endSession();
 
@@ -595,6 +750,7 @@ export const updateReservationStatus = async (req, res) => {
       previousStatus,
       newStatus: status,
       emailQueued: true,
+      ...(billingUpdated ? { billingUpdated } : {}),
     });
   } catch (error) {
     await session.abortTransaction();
