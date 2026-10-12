@@ -249,6 +249,15 @@ export const addReservation = async (req, res) => {
       if (!finalGuestId || !mongoose.isValidObjectId(String(finalGuestId))) {
         return res.status(400).json({ error: "Invalid guestId" });
       }
+
+      // A well-formed but non-existent ObjectId would otherwise create a
+      // reservation with a dangling guestId reference — populate() on it
+      // silently returns null downstream (e.g. Track Booking's email
+      // check), so this must be rejected up front, not discovered later.
+      const guestExists = await Guest.exists({ _id: finalGuestId });
+      if (!guestExists) {
+        return res.status(400).json({ error: "Guest not found" });
+      }
     }
 
     const stay = resolveStay({
