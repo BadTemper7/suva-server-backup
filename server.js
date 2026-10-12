@@ -132,8 +132,14 @@ async function startServer() {
   console.log("✅ Auto-unlock job started");
 
   // Verify email connection
-  await verifyEmailConnection();
-  console.log("✅ Email service verified");
+  const emailOk = await verifyEmailConnection();
+  if (emailOk) {
+    console.log("✅ Email service verified");
+  } else {
+    console.warn(
+      "⚠️  Email service NOT verified - emails will fail to send until SMTP credentials are fixed",
+    );
+  }
 
   const __filename = fileURLToPath(import.meta.url);
   const __dirname = path.dirname(__filename);
