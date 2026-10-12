@@ -622,9 +622,14 @@ export const updateReservationStatus = async (req, res) => {
           paymentOption,
         });
 
+        // Settle only up to what's actually due *now* under the chosen
+        // payment option — the full total for a "full" option, or just the
+        // downpayment percentage for a "partial" one. Confirming a
+        // downpayment-based reservation should land billing on "partial",
+        // not force it to "paid" ahead of the real remaining balance.
         const outstanding = Math.max(
           0,
-          current.totalAmount - current.amountPaid,
+          current.amountDueNow - current.amountPaid,
         );
 
         if (outstanding <= 0) {
@@ -685,7 +690,7 @@ export const updateReservationStatus = async (req, res) => {
                 amountPaid: outstanding,
                 amountReceived: outstanding,
                 status: "confirmed",
-                notes: "Marked fully paid on reservation confirmation",
+                notes: "Settled amount due on reservation confirmation",
               },
             ],
             { session },
