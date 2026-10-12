@@ -1305,7 +1305,7 @@ export const sendReservationStatusEmail = async (
   const amountPaidHtml = billing
     ? escapeEmailHtml(formatPhp(amountPaidNumeric))
     : escapeEmailHtml(
-        "Not recorded yet — it will appear after your payment is posted (see My Bookings).",
+        "Not recorded yet — it will appear after your payment is posted (see Track My Booking).",
       );
 
   const adults = Number(reservation.adults ?? 0);
@@ -1322,7 +1322,7 @@ export const sendReservationStatusEmail = async (
       .populate("addOns.addOnId");
 
     if (resRooms.length === 0) {
-      pendingRoomsBlock = `<p style="margin-top:12px;"><strong>Rooms / cottages:</strong> ${escapeEmailHtml("Not listed yet — open My Bookings for the latest list.")}</p>`;
+      pendingRoomsBlock = `<p style="margin-top:12px;"><strong>Rooms / cottages:</strong> ${escapeEmailHtml("Not listed yet — open Track My Booking for the latest list.")}</p>`;
     } else {
       const lis = [];
       for (const rr of resRooms) {
@@ -1345,7 +1345,7 @@ export const sendReservationStatusEmail = async (
       pendingRoomsBlock =
         lis.length > 0
           ? `<p style="margin-top:12px;"><strong>Rooms / cottages:</strong></p><ul style="margin:6px 0 0 0;padding-left:20px;">${lis.join("")}</ul>`
-          : `<p style="margin-top:12px;"><strong>Rooms / cottages:</strong> ${escapeEmailHtml("Not listed yet — open My Bookings for the latest list.")}</p>`;
+          : `<p style="margin-top:12px;"><strong>Rooms / cottages:</strong> ${escapeEmailHtml("Not listed yet — open Track My Booking for the latest list.")}</p>`;
     }
   }
 
@@ -1548,7 +1548,7 @@ export const sendReservationStatusEmail = async (
           ${policySummaryEmailBlock}
           
           <div style="text-align: center;">
-            <a href="${frontendBase}/bookings" class="button">
+            <a href="${frontendBase}/track-booking" class="button">
               View Reservation →
             </a>
           </div>
@@ -1568,6 +1568,187 @@ export const sendReservationStatusEmail = async (
     subject: template.subject,
     html,
     attachments,
+  });
+};
+
+// Reschedule notice (WT-09) — same shell as sendReservationStatusEmail so it
+// reads as part of the same family of emails.
+export const sendReservationRescheduledEmail = async (
+  reservation,
+  guest,
+  previous,
+  billingChanged = false,
+) => {
+  const subject = `Reservation ${reservation.reservationNumber} - Rescheduled`;
+  const color = "#6366f1";
+  const frontendBase = process.env.FRONTEND_URL || "";
+
+  const formatDateTime = (d) =>
+    new Date(d).toLocaleString("en-PH", {
+      weekday: "long",
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true,
+    });
+
+  const adults = Number(reservation.adults ?? 0);
+  const children = Number(reservation.children ?? 0);
+  const totalPax = adults + children;
+
+  let billingBlock = "";
+  if (billingChanged && reservation._id) {
+    const billing = await Billing.findOne({ reservationId: reservation._id });
+    if (billing) {
+      billingBlock = `
+          <div style="background:#f8fafc;border-radius:16px;padding:18px 20px;margin:0 0 24px 0;border:1px solid #e2e8f0;">
+            <p style="color:#222;font-weight:700;margin:0 0 10px 0;font-size:15px;">Updated billing</p>
+            <p style="color:#222;font-size:14px;margin:0 0 10px 0;line-height:1.55;">
+              Your bill has been updated to match the new length of your stay.
+            </p>
+            <p style="color:#222;font-size:14px;margin:0 0 4px 0;"><strong>New total:</strong> ${escapeEmailHtml(formatPhp(billing.totalAmount))}</p>
+            <p style="color:#222;font-size:14px;margin:0 0 4px 0;"><strong>Amount paid:</strong> ${escapeEmailHtml(formatPhp(billing.amountPaid))}</p>
+            <p style="color:#222;font-size:14px;margin:0;"><strong>Balance:</strong> ${escapeEmailHtml(formatPhp(billing.balance))}</p>
+          </div>`;
+    }
+  }
+
+  const html = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>${subject}</title>
+      <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+          line-height: 1.6;
+          background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
+          padding: 20px;
+        }
+        .container {
+          max-width: 600px;
+          margin: 0 auto;
+          background: #ffffff;
+          border-radius: 24px;
+          overflow: hidden;
+          box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+        }
+        .header {
+          background: linear-gradient(135deg, ${color}, ${color}dd);
+          padding: 40px 30px;
+          text-align: center;
+        }
+        .logo {
+          width: 80px;
+          height: 80px;
+          background: white;
+          border-radius: 50%;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          margin-bottom: 20px;
+        }
+        .logo img {
+          width: 60px;
+          height: 60px;
+          object-fit: contain;
+        }
+        .brand-name {
+          font-family: 'Dancing Script', cursive;
+          font-size: 32px;
+          font-weight: bold;
+          color: white;
+        }
+        .content {
+          padding: 40px 30px;
+          background: white;
+        }
+        .reservation-details {
+          background: linear-gradient(135deg, #fffbeb, #fef3c7);
+          border-radius: 20px;
+          padding: 25px;
+          margin: 30px 0;
+        }
+        .button {
+          display: inline-block;
+          padding: 14px 32px;
+          background: linear-gradient(135deg, ${color}, ${color}dd);
+          color: white;
+          text-decoration: none;
+          border-radius: 50px;
+          font-weight: 600;
+        }
+        .footer {
+          background: linear-gradient(135deg, #78350f, #92400e);
+          padding: 30px;
+          text-align: center;
+          color: white;
+        }
+        @import url('https://fonts.googleapis.com/css2?family=Dancing+Script:wght@400;500;600;700&display=swap');
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <div class="header">
+          <div class="logo">
+            <img src="${process.env.LOGO_URL || "https://suvasplaceresort.com/images/small-logo.png"}" alt="Suva's Place Resort" />
+          </div>
+          <div class="brand-name">Suva's Place</div>
+          <div style="font-size: 48px; margin-top: 20px;">📅</div>
+        </div>
+
+        <div class="content">
+          <h2 style="color: #78350f;">Reservation Rescheduled</h2>
+          <p style="color: #6b4c2c; margin: 20px 0;">
+            Dear <strong>${escapeEmailHtml(guest.firstName)} ${escapeEmailHtml(guest.lastName)}</strong>,
+          </p>
+          <p style="color: #6b4c2c; margin: 0 0 20px 0;">
+            Your reservation has been moved to new dates. Your updated details are below.
+          </p>
+
+          <div class="reservation-details">
+            <h3 style="color: #78350f; margin-bottom: 15px;">📋 Reservation Details</h3>
+            <p><strong>Reservation Number:</strong> ${escapeEmailHtml(reservation.reservationNumber)}</p>
+            <p><strong>New check-in:</strong> ${escapeEmailHtml(formatDateTime(reservation.checkIn))}</p>
+            <p><strong>New check-out:</strong> ${escapeEmailHtml(formatDateTime(reservation.checkOut))}</p>
+            <p><strong>Stay:</strong> ${escapeEmailHtml(stayDurationLabel(reservation))}</p>
+            <p><strong>Guests:</strong> ${adults} adult(s), ${children} child(ren) (${totalPax} total)</p>
+            <p style="margin-top:12px;color:#94a3b8;font-size:14px;">
+              Previously: <span style="text-decoration:line-through;">${escapeEmailHtml(formatDateTime(previous.checkIn))} – ${escapeEmailHtml(formatDateTime(previous.checkOut))}</span>
+            </p>
+          </div>
+
+          ${billingBlock}
+
+          <p style="color:#6b4c2c;font-size:14px;margin:0 0 24px 0;">
+            If you didn't request this change or the new dates don't work for you, please contact us as soon as possible.
+          </p>
+
+          <div style="text-align: center;">
+            <a href="${frontendBase}/track-booking" class="button">
+              Track My Booking →
+            </a>
+          </div>
+        </div>
+
+        <div class="footer">
+          <div class="tagline">Have Fun Under The Sun</div>
+          <div>📞 +63 976023356 | 📧 suvasplaceinc@gmail.com</div>
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
+
+  return await sendEmail({
+    to: guest.email,
+    subject,
+    html,
   });
 };
 
@@ -1630,6 +1811,7 @@ export default {
   sendStaffPasswordResetEmail,
   sendStaffAccountLockedEmail,
   sendReservationStatusEmail,
+  sendReservationRescheduledEmail,
   sendInvoiceEmail,
   verifyEmailConnection,
 };

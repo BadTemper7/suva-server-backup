@@ -17,7 +17,10 @@ import ExcelJS from "exceljs";
 import fs from "fs";
 import path from "path";
 import { createNotification } from "../models/Notification.js";
-import { sendReservationStatusEmail, sendEmail } from "../config/email.js";
+import {
+  sendReservationStatusEmail,
+  sendReservationRescheduledEmail,
+} from "../config/email.js";
 import { emailQueue } from "../utils/emailQueue.js";
 import OperationLog from "../models/OperationLog.js";
 import { computeBillingTotals } from "../utils/billingCalc.js";
@@ -990,11 +993,12 @@ export const updateReservation = async (req, res) => {
     try {
       const guest = await Guest.findById(reservation.guestId);
       if (guest?.email) {
-        await sendEmail({
-          to: guest.email,
-          subject: `Your reservation ${reservation.reservationNumber} has been rescheduled`,
-          html: `<p>Hi ${guest.firstName || "Guest"},</p><p>Your reservation <strong>${reservation.reservationNumber}</strong> has been rescheduled.</p><p>New dates: <strong>${reservation.checkIn.toLocaleDateString()} - ${reservation.checkOut.toLocaleDateString()}</strong></p><p>If you have questions, please contact us.</p>`,
-        });
+        await sendReservationRescheduledEmail(
+          reservation,
+          guest,
+          before,
+          Boolean(billingUpdated),
+        );
       }
     } catch (emailErr) {
       console.error("Failed to send reschedule email:", emailErr.message);
