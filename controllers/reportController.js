@@ -20,6 +20,11 @@ import {
 } from "../utils/reportExportFormatting.js";
 import { stayTypeLabel } from "../utils/stayPricing.js";
 import { getStartOfDay, getEndOfDay } from "../utils/dateRange.js";
+import {
+  getRevenueEvents,
+  revenueTotals,
+  refundedBillingFilter,
+} from "../utils/revenue.js";
 const { Reservation, ReservationRoom } = ReservationModel;
 // Helper function to generate date ranges
 const getDateRange = (period, startDate, endDate) => {
@@ -424,6 +429,12 @@ export const getRevenueReport = async (req, res) => {
       },
     );
 
+    // totalPaid stays gross ("Amount Collected"); totalRevenue is net of
+    // policy refunds processed in this window, same as the Dashboard.
+    const { refunded, net } = revenueTotals(await getRevenueEvents(start, end));
+    totals.totalRefunded = refunded;
+    totals.totalRevenue = net;
+
     // Group by payment method
     const paymentMethodSummary = {};
     for (const receipt of receipts) {
@@ -534,24 +545,13 @@ export const getPaymentReport = async (req, res) => {
   }
 };
 
-// Refund rows in range: prefer refundedAt (actual refund time), fall back to updatedAt for legacy data
-const refundReportBillingFilter = (start, end) => ({
-  status: "refunded",
-  $expr: {
-    $and: [
-      { $gte: [{ $ifNull: ["$refundedAt", "$updatedAt"] }, start] },
-      { $lte: [{ $ifNull: ["$refundedAt", "$updatedAt"] }, end] },
-    ],
-  },
-});
-
 // 6. Refund Report
 export const getRefundReport = async (req, res) => {
   try {
     const { period, startDate, endDate } = req.query;
     const { start, end } = getDateRange(period, startDate, endDate);
 
-    const billings = await Billing.find(refundReportBillingFilter(start, end))
+    const billings = await Billing.find(refundedBillingFilter(start, end))
       .populate({
         path: "reservationId",
         populate: {
@@ -870,45 +870,77 @@ const getRevenueReportData = async (params, fmt) => {
   const { period, startDate, endDate } = params;
   const { start, end } = getDateRange(period, startDate, endDate);
 
-  const billings = await Billing.find({
-    createdAt: { $gte: start, $lte: end },
-    status: { $in: ["paid", "partial"] },
-  })
-    .populate({
-      path: "reservationId",
-      populate: {
-        path: "guestId",
-        select: "firstName lastName",
-      },
-    })
-    .populate({
-      path: "receipts",
-      match: { status: "confirmed" },
-    });
+  // Same basis as getRevenueReport/Dashboard: payments by payment date, minus
+  // policy refunds (refundAmount only) by refund date.
+  const billingPopulate = {
+    path: "reservationId",
+    select: "reservationNumber guestId",
+    populate: { path: "guestId", select: "firstName lastName" },
+  };
+  const [receipts, refunds] = await Promise.all([
+    Receipt.find({ createdAt: { $gte: start, $lte: end }, status: "confirmed" })
+      .populate({
+        path: "billingId",
+        select: "billingNumber status reservationId",
+        populate: billingPopulate,
+      })
+      .sort({ createdAt: 1 }),
+    Billing.find(refundedBillingFilter(start, end)).populate(billingPopulate),
+  ]);
+
+  const guestName = (reservation) =>
+    reservation?.guestId
+      ? `${reservation.guestId.firstName} ${reservation.guestId.lastName}`
+      : "N/A";
+
+  const rows = [
+    ...receipts.map((r) => ({
+      at: r.createdAt,
+      billingNumber: r.billingId?.billingNumber || "N/A",
+      reservationNumber: r.billingId?.reservationId?.reservationNumber || "N/A",
+      guestName: guestName(r.billingId?.reservationId),
+      type: "Payment",
+      amount: r.amountPaid || 0,
+      status: r.billingId?.status || "N/A",
+    })),
+    ...refunds.map((b) => ({
+      at: b.refundedAt || b.updatedAt,
+      billingNumber: b.billingNumber || "N/A",
+      reservationNumber: b.reservationId?.reservationNumber || "N/A",
+      guestName: guestName(b.reservationId),
+      type: "Refund",
+      amount: -(b.refundAmount || 0),
+      status: b.status,
+    })),
+  ].sort((a, b) => new Date(a.at) - new Date(b.at));
+
+  const netRevenue = rows.reduce((sum, r) => sum + r.amount, 0);
 
   return {
     columns: [
+      { header: "Date", key: "date", width: 20 },
+      { header: "Type", key: "type", width: 12 },
       { header: "Billing No.", key: "billingNumber", width: 15 },
       { header: "Reservation No.", key: "reservationNumber", width: 15 },
       { header: "Guest Name", key: "guestName", width: 20 },
-      { header: "Total Amount", key: "totalAmount", width: 15 },
-      { header: "Amount Paid", key: "amountPaid", width: 15 },
-      { header: "Balance", key: "balance", width: 15 },
-      { header: "Status", key: "status", width: 15 },
-      { header: "Payment Date", key: "paymentDate", width: 20 },
+      { header: "Amount", key: "amount", width: 15 },
+      { header: "Billing Status", key: "status", width: 15 },
     ],
-    rows: billings.map((b) => ({
-      billingNumber: b.billingNumber || "N/A",
-      reservationNumber: b.reservationId?.reservationNumber || "N/A",
-      guestName: b.reservationId?.guestId
-        ? `${b.reservationId.guestId.firstName} ${b.reservationId.guestId.lastName}`
-        : "N/A",
-      totalAmount: b.totalAmount,
-      amountPaid: b.amountPaid,
-      balance: b.balance,
-      status: b.status,
-      paymentDate: formatExportDateTime(b.updatedAt, fmt),
-    })),
+    rows: [
+      ...rows.map(({ at, ...row }) => ({
+        ...row,
+        date: formatExportDateTime(at, fmt),
+      })),
+      {
+        date: "",
+        type: "Net revenue",
+        billingNumber: "",
+        reservationNumber: "",
+        guestName: "",
+        amount: netRevenue,
+        status: "",
+      },
+    ],
   };
 };
 
@@ -1045,7 +1077,7 @@ const getRefundsReportData = async (params, fmt) => {
   const { period, startDate, endDate } = params;
   const { start, end } = getDateRange(period, startDate, endDate);
 
-  const billings = await Billing.find(refundReportBillingFilter(start, end))
+  const billings = await Billing.find(refundedBillingFilter(start, end))
     .populate({
       path: "reservationId",
       populate: {

@@ -18,6 +18,11 @@ import PDFDocument from "pdfkit";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
+import {
+  getRevenueEvents,
+  sumRevenue,
+  revenueTotals,
+} from "../utils/revenue.js";
 // Add this helper function at the top of the file
 const formatMoney = (amount) => {
   return new Intl.NumberFormat("en-PH", {
@@ -554,11 +559,19 @@ export const generateBillingReport = async (req, res) => {
 
     console.log(`Found ${billings.length} billings for the period`);
 
+    const revenueEvents = await getRevenueEvents(start, end);
+
     // Calculate summary statistics
-    const summary = calculateBillingSummary(billings);
+    const summary = calculateBillingSummary(billings, revenueEvents);
 
     // Group by time periods for charts
-    const breakdown = getPeriodBreakdown(billings, period, start, end);
+    const breakdown = getPeriodBreakdown(
+      billings,
+      period,
+      start,
+      end,
+      revenueEvents,
+    );
 
     // Get top performing data
     const topData = getTopPerformers(billings);
@@ -611,23 +624,14 @@ export const generateBillingReport = async (req, res) => {
   }
 };
 /**
- * Cash actually collected on a billing (confirmed receipts), counted only for
- * billings that have received payment. Shared by calculateBillingSummary and
- * getPeriodBreakdown so the headline number and the chart agree (see WT-02).
- */
-function getCollectedAmount(bill) {
-  if (bill.status !== "paid" && bill.status !== "partial") return 0;
-  return bill.receipts?.reduce((sum, r) => sum + (r.amountPaid || 0), 0) || 0;
-}
-
-/**
  * Calculate summary statistics from billings
  */
-function calculateBillingSummary(billings) {
+function calculateBillingSummary(billings, revenueEvents = []) {
   const summary = {
     totalBillings: billings.length,
     totalRevenue: 0,
     totalAmountPaid: 0,
+    totalRefunded: 0,
     totalBalance: 0,
     totalDiscount: 0,
     totalSubtotal: 0,
@@ -645,16 +649,21 @@ function calculateBillingSummary(billings) {
     topDayRevenue: 0,
   };
 
+  // Revenue comes from dated payments/refunds (utils/revenue.js), not from
+  // billings: a partially refunded billing keeps its retained amount counted,
+  // and money is credited to the day it actually moved.
+  const { collected, refunded, net } = revenueTotals(revenueEvents);
+  summary.totalRevenue = net;
+  summary.totalAmountPaid = collected;
+  summary.totalRefunded = refunded;
+
   const dailyRevenue = {};
+  revenueEvents.forEach((e) => {
+    const dateKey = e.at.toLocaleDateString("en-CA");
+    dailyRevenue[dateKey] = (dailyRevenue[dateKey] || 0) + e.amount;
+  });
 
   billings.forEach((bill) => {
-    // Revenue = cash actually collected, matching the definition the Reports
-    // page's Revenue Report uses (previously this summed every billing's
-    // totalAmount regardless of paid/unpaid/refunded/voided status; see WT-02).
-    const collectedAmount = getCollectedAmount(bill);
-
-    summary.totalRevenue += collectedAmount;
-    summary.totalAmountPaid += collectedAmount;
     summary.totalBalance += bill.balance || 0;
     summary.totalDiscount += bill.discountAmount || 0;
     summary.totalSubtotal += bill.subTotal || 0;
@@ -663,10 +672,6 @@ function calculateBillingSummary(billings) {
     if (bill.status && summary.statusBreakdown[bill.status] !== undefined) {
       summary.statusBreakdown[bill.status]++;
     }
-
-    // Daily revenue tracking
-    const dateKey = bill.createdAt.toISOString().split("T")[0];
-    dailyRevenue[dateKey] = (dailyRevenue[dateKey] || 0) + collectedAmount;
   });
 
   // Calculate averages
@@ -693,7 +698,7 @@ function calculateBillingSummary(billings) {
 /**
  * Get period breakdown for charts
  */
-function getPeriodBreakdown(billings, period, start, end) {
+function getPeriodBreakdown(billings, period, start, end, revenueEvents = []) {
   const breakdown = {
     labels: [],
     revenue: [],
@@ -719,7 +724,7 @@ function getPeriodBreakdown(billings, period, start, end) {
 
         breakdown.labels.push(`${hour}:00`);
         breakdown.revenue.push(
-          hourBillings.reduce((sum, bill) => sum + getCollectedAmount(bill), 0),
+          sumRevenue(revenueEvents, hourStart, hourEnd),
         );
         breakdown.count.push(hourBillings.length);
         breakdown.paid.push(
@@ -751,7 +756,7 @@ function getPeriodBreakdown(billings, period, start, end) {
           day.toLocaleDateString("en-PH", { weekday: "short", day: "numeric" }),
         );
         breakdown.revenue.push(
-          dayBillings.reduce((sum, bill) => sum + getCollectedAmount(bill), 0),
+          sumRevenue(revenueEvents, dayStart, dayEnd),
         );
         breakdown.count.push(dayBillings.length);
         breakdown.paid.push(
@@ -779,7 +784,7 @@ function getPeriodBreakdown(billings, period, start, end) {
 
         breakdown.labels.push(`Week ${week}`);
         breakdown.revenue.push(
-          weekBillings.reduce((sum, bill) => sum + getCollectedAmount(bill), 0),
+          sumRevenue(revenueEvents, weekStart, weekEnd),
         );
         breakdown.count.push(weekBillings.length);
         breakdown.paid.push(
@@ -806,7 +811,7 @@ function getPeriodBreakdown(billings, period, start, end) {
           monthStart.toLocaleDateString("en-PH", { month: "short" }),
         );
         breakdown.revenue.push(
-          monthBillings.reduce((sum, bill) => sum + getCollectedAmount(bill), 0),
+          sumRevenue(revenueEvents, monthStart, monthEnd),
         );
         breakdown.count.push(monthBillings.length);
         breakdown.paid.push(
@@ -1482,11 +1487,19 @@ async function generateReportData(queryParams) {
     })
     .sort({ createdAt: 1 });
 
+  const revenueEvents = await getRevenueEvents(start, end);
+
   // Calculate summary statistics
-  const summary = calculateBillingSummary(billings);
+  const summary = calculateBillingSummary(billings, revenueEvents);
 
   // Group by time periods for charts
-  const breakdown = getPeriodBreakdown(billings, period, start, end);
+  const breakdown = getPeriodBreakdown(
+    billings,
+    period,
+    start,
+    end,
+    revenueEvents,
+  );
 
   // Get top performing data
   const topData = getTopPerformers(billings);
