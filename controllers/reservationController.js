@@ -293,6 +293,30 @@ export const addReservation = async (req, res) => {
         .status(400)
         .json({ error: "Invalid or inactive payment option" });
 
+    // Rooms are attached in a separate call after this one, so check them
+    // here first when the client sends them — otherwise a room that went
+    // inactive/maintenance after the page loaded leaves an empty reservation.
+    const requestedRoomIds = Array.isArray(req.body.roomIds)
+      ? req.body.roomIds.filter((id) => mongoose.isValidObjectId(String(id)))
+      : [];
+    if (requestedRoomIds.length > 0) {
+      const notBookable = await Room.find({
+        _id: { $in: requestedRoomIds },
+        status: { $ne: "active" },
+      })
+        .select("roomNumber category status")
+        .lean();
+      if (notBookable.length > 0) {
+        const labels = notBookable.map(
+          (r) =>
+            `${r.category === "cottage" ? "Cottage" : "Room"} ${r.roomNumber} (${r.status})`,
+        );
+        return res.status(400).json({
+          error: `Not available for booking: ${labels.join(", ")}`,
+        });
+      }
+    }
+
     // --- Determine reservation status ---
     let status = reqStatus;
     if (userId) {

@@ -213,6 +213,33 @@ export const addReservationRooms = async (req, res) => {
       await validateAddOnStock(reservation, combinedAddOns);
     }
 
+    // Only active units can be newly booked — inactive/maintenance rooms are
+    // hidden from the availability list, but that's client-side only, so a
+    // stale page or direct API call could still attach them. Rooms already
+    // linked to this reservation are exempt (this call also merges add-ons).
+    const requestedIds = (rooms || []).map((r) => String(r.roomId));
+    const [requestedRooms, existingLinks] = await Promise.all([
+      Room.find({ _id: { $in: requestedIds } })
+        .select("roomNumber category status")
+        .lean(),
+      ReservationRoom.find({ reservationId, roomId: { $in: requestedIds } })
+        .select("roomId")
+        .lean(),
+    ]);
+    const alreadyLinked = new Set(existingLinks.map((l) => String(l.roomId)));
+    const notBookable = requestedRooms.filter(
+      (r) => r.status !== "active" && !alreadyLinked.has(String(r._id)),
+    );
+    if (notBookable.length > 0) {
+      const labels = notBookable.map(
+        (r) =>
+          `${r.category === "cottage" ? "Cottage" : "Room"} ${r.roomNumber} (${r.status})`,
+      );
+      return res.status(400).json({
+        error: `Not available for booking: ${labels.join(", ")}`,
+      });
+    }
+
     // Add rooms and add-ons to the reservation
     for (const room of rooms) {
       // Validate room existence
